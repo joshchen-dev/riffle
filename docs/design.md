@@ -1,0 +1,148 @@
+# Riffle design
+
+Log rules as Kubernetes resources. Teams declare `LogAlert`s. A node agent matches them against pod logs, and the operator turns matches into metrics, Events and status. The `riffle` CLI tails the same logs ad hoc and reuses the same rules.
+
+## Architecture
+
+    ┌──────────── control plane ────────────┐
+    │ riffle-operator (Deployment, 1 rep)   │
+    │  - validates LogAlerts → .status      │
+    │  - owns agent DaemonSet               │
+    │  - aggregates counts → Firing, Events │
+    └───────▲───────────────────────────────┘
+            │ POST /v1/counts (10s buckets)
+    ┌───────┴──── each node ────────────────┐
+    │ riffle-agent (DaemonSet)              │
+    │  - watches LogAlerts + pods on node   │
+    │  - tails /var/log/pods (read-only)    │
+    │  - match → redact → count, /metrics   │
+    └───────────────────────────────────────┘
+    riffle CLI ── pods/log API ── any cluster (operator optional)
+
+- `pkg/filter`: shared by agent and CLI. Regex (RE2) + `where` expressions + redaction. That makes CLI filters and LogAlerts mean the same thing.
+- Agents read LogAlerts directly through an informer. No compiled ConfigMap in between, so rule changes apply immediately.
+- Thresholds are cluster-wide, so per-node counting can't decide them. Agents push per-rule bucket counts, and the operator sums them over the window.
+
+## CRD: `LogAlert` (`riffle.jhchen.dev/v1alpha1`, namespaced)
+
+Namespaced: a rule only selects pods in its own namespace. Team RBAC then maps onto rules directly.
+
+    apiVersion: riffle.jhchen.dev/v1alpha1
+    kind: LogAlert
+    metadata: {name: api-timeouts, namespace: payments}
+    spec:
+      selector:                    # metav1.LabelSelector, required
+        matchLabels: {app: api}
+      container: api               # optional; default all
+      match: 'level=error .* timeout'          # RE2, optional
+      where: 'level=error AND latency_ms>500'  # JSON field expr, optional
+      threshold: {count: 20, window: 5m}       # count ≥1, window 1m–1h
+      redact: ['card=\d+']         # RE2, replaced with [REDACTED]
+      suspend: false
+    status:
+      observedGeneration: 3
+      matchedPods: 4
+      lastMatchTime: ...
+      lastFiredTime: ...
+      conditions:
+        - type: Ready     # spec compiles and agents run it
+          reasons: Valid | InvalidSpec | Suspended
+        - type: Firing    # window count ≥ threshold
+          reasons: ThresholdExceeded | BelowThreshold
+
+- At least one of `match`/`where` is required (CEL rule on the CRD).
+- Regex validity is checked by the reconciler (CEL can't compile RE2). No webhook in v1alpha1.
+- `where` grammar: `field op value` joined with `AND`/`OR`/`NOT` and parentheses. Ops: `= != > >= < <= ~`. Fields are dotted JSON paths. Non-JSON lines never match a `where`.
+
+## Reconciliation
+
+LogAlert controller (watches LogAlert, and Pods mapped to the LogAlerts that select them):
+1. Get the LogAlert. If it's gone, stop. No finalizer is needed because nothing external is owned.
+2. Compile `match`, `where`, `redact`. On error: Ready=False/InvalidSpec with the message, then stop.
+3. `suspend` → Ready=False/Suspended.
+4. Count the selected Running pods → `matchedPods`.
+5. Ready=True/Valid. Set `observedGeneration`.
+6. Status patch only. Requeue: none. Events and the Pod watch drive it.
+
+Agent controller (singleton): ensure the DaemonSet, ServiceAccount, RBAC and Service match the desired spec.
+
+Aggregator (runs in the operator):
+- Agents POST `{rule, node, bucketStart, count, sample}` every 10s.
+- For each rule, the operator keeps a ring of buckets in memory and sums them over the window.
+- Crossing the threshold sets Firing=True and records a Warning Event `ThresholdExceeded` on the LogAlert, with the redacted sample truncated to 256 chars.
+- Dropping back below sets Firing=False.
+- Ceiling: the window lives in memory, so a restart resets it. That's acceptable for windows of 1h or less.
+
+## Reading logs: `/var/log/pods` vs kubelet API
+
+**Recommendation: `/var/log/pods` via read-only hostPath.**
+
+| | `/var/log/pods` | kubelet `/containerLogs` |
+|---|---|---|
+| RBAC | pods list/watch (own node) | `nodes/proxy`, which is effectively cluster-admin on the node |
+| Cost | file reads | one HTTP stream per container through kubelet |
+| Restart recovery | resume from saved offsets | re-stream with `sinceTime`, gaps or dupes |
+| Precedent | Fluent Bit, Vector, Promtail | rare for agents |
+| Downside | parse CRI format, handle rotation, privileged PSA namespace | none of that |
+
+- Path: `/var/log/pods/<ns>_<pod>_<uid>/<container>/<n>.log`. The agent maps uid → pod labels using a pod informer filtered by `spec.nodeName`.
+- CRI line format: `<ts> <stream> <P|F> <msg>`. Join `P` partial lines until `F`.
+- Rotation: detect it by inode change or truncation, then finish the old file before switching. Offsets are kept in memory in v1. A restart resumes from EOF and may skip lines.
+- Only containerd/CRI-O are supported. dockershim is gone.
+
+## CLI
+
+Standalone, it uses kubeconfig and the `pods/log` API. If it finds the `riffle.jhchen.dev` CRD, it enables the operator-backed features.
+
+    riffle tail [-n ns] [-l sel] [-c container] [--match re] [--where expr]
+                [--since 10m] [--json] [-i]
+    riffle tail --rule <name>          # selector/match/where/redact from a LogAlert
+    riffle alert new <name> --match .. --where .. --count 20 --window 5m [--apply]
+    riffle alerts                      # list LogAlerts + Ready/Firing
+    riffle version
+
+- Timeline: streams use `timestamps=true` and go through a 250ms reorder buffer, then the CLI prints one merged, ordered output with a pod/container prefix.
+- Redaction: when the operator is installed, the CLI applies the `redact` patterns of every LogAlert that selects the pod.
+- `-i`: a TUI (bubbletea) with an editable filter line. The `a` key exports the current filter as LogAlert YAML.
+
+## Metrics
+
+- Agent:
+  - `riffle_matches_total{namespace,rule,container}`
+  - `riffle_lines_total`, `riffle_bytes_total`, `riffle_dropped_lines_total`
+  - `riffle_rule_errors_total`
+- Operator:
+  - `riffle_alert_firing{namespace,rule}` (gauge)
+  - `riffle_alert_window_count{namespace,rule}`
+  - controller-runtime defaults
+- No pod label, to cap cardinality.
+
+## Non-goals
+
+- Log storage, search and retention. Use Loki or ES.
+- Shipping all logs. Only matches leave the node, and only to S3 from M7.
+- Sources outside pods (journald, files on the host).
+- Multi-cluster, web UI.
+- Redaction as a security boundary. Anyone with `pods/log` still sees raw lines.
+- Docker runtime.
+
+## Milestones
+
+1. **M0** scaffold: kubebuilder layout, CLI skeleton, Makefile, CI (lint, unit, envtest, image), README, VERSION check.
+2. **M1** CRD + LogAlert controller (validation, status), envtest coverage.
+3. **M2** `riffle tail` standalone: multi-pod merge, `--match`, `--where`, `pkg/filter`.
+4. **M3** agent: CRI tailing, rotation, metrics. DaemonSet managed by the operator. Runs on k3d.
+5. **M4** aggregation: Firing condition, Events.
+6. **M5** CLI ↔ operator: `--rule`, redaction, `alert new`, `alerts`.
+7. **M6** `tail -i` TUI.
+8. **M7** S3 archive of redacted matches. Bucket, IAM and lifecycle in Terraform.
+9. **M8** homelab: RHEL/k3s, Argo CD app-of-apps, Riffle watching k3s/Argo CD/Traefik pods.
+
+## Risks
+
+- **Agent CPU at high volume.** Every line is checked against every rule that selects the pod. Mitigations: index rules per pod, use literal prefilters, count dropped lines.
+- **Rotation/partial-line bugs.** Covered by a fixture-based test suite for CRI files.
+- **Operator as single aggregator.** Counts are lost while it is down, and the window resets on restart. Upgrade path: leader-elected HA with agents pushing to the leader Service.
+- **hostPath + privileged PSA** on the agent namespace. Mitigations: mount read-only, run as non-root, drop all capabilities.
+- **Cardinality.** User-controlled rule names in labels, bounded by the number of LogAlerts.
+- **S3 creds on k3s.** No IRSA there. Use IAM Roles Anywhere or a scoped IAM user. Decide at M7.

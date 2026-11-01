@@ -1,3 +1,6 @@
+VERSION := $(shell cat VERSION)
+LDFLAGS := -X main.version=$(VERSION)
+
 # Image URL to use all building/pushing image targets
 IMG ?= riffle-operator:dev
 # YEAR defines the year value used for substituting the YEAR placeholder in the boilerplate header.
@@ -78,8 +81,9 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 ##@ Build
 
 .PHONY: build
-build: manifests generate fmt vet ## Build manager binary.
+build: manifests generate fmt vet ## Build manager and riffle CLI binaries.
 	go build -o bin/manager cmd/main.go
+	go build -ldflags "$(LDFLAGS)" -o bin/riffle ./cmd/riffle
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.

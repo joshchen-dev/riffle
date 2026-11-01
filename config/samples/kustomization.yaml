@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- riffle_v1alpha1_logalert.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

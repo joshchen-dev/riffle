@@ -1,0 +1,9 @@
+apiVersion: riffle.jhchen.dev/v1alpha1
+kind: LogAlert
+metadata:
+  labels:
+    app.kubernetes.io/name: riffle
+    app.kubernetes.io/managed-by: kustomize
+  name: logalert-sample
+spec:
+  # TODO(user): Add fields here

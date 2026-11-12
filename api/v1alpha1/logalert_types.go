@@ -21,38 +21,82 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// LogAlertSpec defines the desired state of LogAlert
+// LogAlertSpec defines a log rule.
+// +kubebuilder:validation:XValidation:rule="has(self.match) || has(self.where)",message="match or where is required"
 type LogAlertSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// selector picks pods in the LogAlert's namespace.
+	// +required
+	Selector metav1.LabelSelector `json:"selector"`
 
-	// foo is an example field of LogAlert. Edit logalert_types.go to remove/update
+	// container limits matching to one container. Empty means all.
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	Container string `json:"container,omitempty"`
+
+	// match is an RE2 regex tested against the raw line.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Match string `json:"match,omitempty"`
+
+	// where filters JSON lines, e.g. `level=error AND latency_ms>500`.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Where string `json:"where,omitempty"`
+
+	// threshold fires the alert when matches in window reach count.
+	// +required
+	Threshold Threshold `json:"threshold"`
+
+	// redact lists RE2 regexes replaced with [REDACTED] in anything Riffle emits.
+	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MaxLength=1024
+	Redact []string `json:"redact,omitempty"`
+
+	// suspend stops matching without deleting the rule.
+	// +optional
+	Suspend bool `json:"suspend,omitempty"`
 }
 
-// LogAlertStatus defines the observed state of LogAlert.
+// Threshold is a match count over a sliding window.
+type Threshold struct {
+	// +required
+	// +kubebuilder:validation:Minimum=1
+	Count int32 `json:"count"`
+
+	// window is between 1m and 1h.
+	// +required
+	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('1m') && duration(self) <= duration('1h')",message="window must be between 1m and 1h"
+	Window metav1.Duration `json:"window"`
+}
+
+// Condition types and reasons.
+const (
+	ConditionReady  = "Ready"
+	ConditionFiring = "Firing"
+
+	ReasonValid       = "Valid"
+	ReasonInvalidSpec = "InvalidSpec"
+	ReasonSuspended   = "Suspended"
+)
+
+// LogAlertStatus is the observed state of a LogAlert.
 type LogAlertStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// matchedPods is the number of Running pods the selector picks.
+	// +optional
+	MatchedPods int32 `json:"matchedPods,omitempty"`
 
-	// conditions represent the current state of the LogAlert resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// +optional
+	LastMatchTime *metav1.Time `json:"lastMatchTime,omitempty"`
+
+	// +optional
+	LastFiredTime *metav1.Time `json:"lastFiredTime,omitempty"`
+
+	// conditions: Ready, Firing.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -61,8 +105,12 @@ type LogAlertStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Firing",type=string,JSONPath=`.status.conditions[?(@.type=="Firing")].status`
+// +kubebuilder:printcolumn:name="Pods",type=integer,JSONPath=`.status.matchedPods`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
-// LogAlert is the Schema for the logalerts API
+// LogAlert is a log rule for pods in its namespace.
 type LogAlert struct {
 	metav1.TypeMeta `json:",inline"`
 

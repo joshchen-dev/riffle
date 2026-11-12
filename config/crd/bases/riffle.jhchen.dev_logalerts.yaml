@@ -14,10 +14,23 @@ spec:
     singular: logalert
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Firing")].status
+      name: Firing
+      type: string
+    - jsonPath: .status.matchedPods
+      name: Pods
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: LogAlert is the Schema for the logalerts API
+        description: LogAlert is a log rule for pods in its namespace.
         properties:
           apiVersion:
             description: |-
@@ -39,25 +52,108 @@ spec:
           spec:
             description: spec defines the desired state of LogAlert
             properties:
-              foo:
-                description: foo is an example field of LogAlert. Edit logalert_types.go
-                  to remove/update
+              container:
+                description: container limits matching to one container. Empty means
+                  all.
                 type: string
+              match:
+                description: match is an RE2 regex tested against the raw line.
+                maxLength: 1024
+                minLength: 1
+                type: string
+              redact:
+                description: redact lists RE2 regexes replaced with [REDACTED] in
+                  anything Riffle emits.
+                items:
+                  maxLength: 1024
+                  type: string
+                maxItems: 32
+                type: array
+              selector:
+                description: selector picks pods in the LogAlert's namespace.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                    type: object
+                type: object
+                x-kubernetes-map-type: atomic
+              suspend:
+                description: suspend stops matching without deleting the rule.
+                type: boolean
+              threshold:
+                description: threshold fires the alert when matches in window reach
+                  count.
+                properties:
+                  count:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  window:
+                    description: window is between 1m and 1h.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: window must be between 1m and 1h
+                      rule: duration(self) >= duration('1m') && duration(self) <=
+                        duration('1h')
+                required:
+                - count
+                - window
+                type: object
+              where:
+                description: where filters JSON lines, e.g. `level=error AND latency_ms>500`.
+                maxLength: 1024
+                minLength: 1
+                type: string
+            required:
+            - selector
+            - threshold
             type: object
+            x-kubernetes-validations:
+            - message: match or where is required
+              rule: has(self.match) || has(self.where)
           status:
             description: status defines the observed state of LogAlert
             properties:
               conditions:
-                description: |-
-                  conditions represent the current state of the LogAlert resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                description: 'conditions: Ready, Firing.'
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -116,6 +212,20 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              lastFiredTime:
+                format: date-time
+                type: string
+              lastMatchTime:
+                format: date-time
+                type: string
+              matchedPods:
+                description: matchedPods is the number of Running pods the selector
+                  picks.
+                format: int32
+                type: integer
+              observedGeneration:
+                format: int64
+                type: integer
             type: object
         required:
         - spec

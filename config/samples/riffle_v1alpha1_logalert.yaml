@@ -1,9 +1,15 @@
 apiVersion: riffle.jhchen.dev/v1alpha1
 kind: LogAlert
 metadata:
-  labels:
-    app.kubernetes.io/name: riffle
-    app.kubernetes.io/managed-by: kustomize
-  name: logalert-sample
+  name: api-timeouts
 spec:
-  # TODO(user): Add fields here
+  selector:
+    matchLabels:
+      app: api
+  match: 'timeout'
+  where: 'level=error AND latency_ms>500'
+  threshold:
+    count: 20
+    window: 5m
+  redact:
+    - 'card=\d+'

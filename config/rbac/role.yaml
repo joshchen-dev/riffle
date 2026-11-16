@@ -5,23 +5,21 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - riffle.jhchen.dev
+  - ""
   resources:
-  - logalerts
+  - pods
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - riffle.jhchen.dev
   resources:
-  - logalerts/finalizers
+  - logalerts
   verbs:
-  - update
+  - get
+  - list
+  - watch
 - apiGroups:
   - riffle.jhchen.dev
   resources:

@@ -20,7 +20,8 @@ Log rules as Kubernetes resources. Teams declare `LogAlert`s. A node agent match
     riffle CLI ── pods/log API ── any cluster (operator optional)
 
 - `pkg/filter`: shared by agent and CLI. Regex (RE2) + `where` expressions + redaction. That makes CLI filters and LogAlerts mean the same thing.
-- Agents read LogAlerts directly through an informer. No compiled ConfigMap in between, so rule changes apply immediately.
+- Agents read LogAlerts and their own node's pods from an informer cache and reconcile file followers every 2s. No compiled ConfigMap in between.
+- One image holds both binaries: `/manager` and `/agent`.
 - Thresholds are cluster-wide, so per-node counting can't decide them. Agents push per-rule bucket counts, and the operator sums them over the window.
 
 ## CRD: `LogAlert` (`riffle.jhchen.dev/v1alpha1`, namespaced)
@@ -110,8 +111,8 @@ Standalone, it uses kubeconfig and the `pods/log` API. If it finds the `riffle.j
 
 - Agent:
   - `riffle_matches_total{namespace,rule,container}`
-  - `riffle_lines_total`, `riffle_bytes_total`, `riffle_dropped_lines_total`
-  - `riffle_rule_errors_total`
+  - `riffle_lines_total`, `riffle_bytes_total`
+  - Invalid rules are skipped; the operator reports them as `InvalidSpec`.
 - Operator:
   - `riffle_alert_firing{namespace,rule}` (gauge)
   - `riffle_alert_window_count{namespace,rule}`

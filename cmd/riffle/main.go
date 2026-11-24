@@ -28,9 +28,13 @@ import (
 	"syscall"
 	"time"
 
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	rifflev1alpha1 "github.com/joshchen-dev/riffle/api/v1alpha1"
 	"github.com/joshchen-dev/riffle/internal/tail"
 	"github.com/joshchen-dev/riffle/pkg/filter"
 )
@@ -74,6 +78,7 @@ func runTail(args []string, out, errOut io.Writer) int {
 	fs.SetOutput(errOut)
 	fs.Usage = func() {
 		fmt.Fprintln(errOut, "usage: riffle tail [-n ns] [-l selector] [-c container] [--match re] [--where expr]")
+		fmt.Fprintln(errOut, "       riffle tail [-n ns] --rule name")
 		fs.PrintDefaults()
 	}
 	var (
@@ -85,6 +90,7 @@ func runTail(args []string, out, errOut io.Writer) int {
 		match      = fs.String("match", "", "RE2 regex on the raw line")
 		where      = fs.String("where", "", "JSON field filter, e.g. 'level=error AND latency_ms>500'")
 		since      = fs.Duration("since", time.Minute, "start this far back")
+		rule       = fs.String("rule", "", "use the selector, container, match, where and redact of this LogAlert")
 	)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -94,6 +100,10 @@ func runTail(args []string, out, errOut io.Writer) int {
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintf(errOut, "riffle tail: unexpected argument %q\n", fs.Arg(0))
+		return 2
+	}
+	if *rule != "" && (*selector != "" || *container != "" || *match != "" || *where != "") {
+		fmt.Fprintln(errOut, "riffle tail: --rule can't be combined with -l, -c, --match or --where")
 		return 2
 	}
 	f, err := filter.Compile(*match, *where, nil)
@@ -133,9 +143,37 @@ func runTail(args []string, out, errOut io.Writer) int {
 		Filter:    f,
 		Delay:     250 * time.Millisecond,
 	}
+	alerts, err := loadAlerts(ctx, cfg, *ns)
+	switch {
+	case err != nil && *rule != "":
+		fmt.Fprintf(errOut, "riffle tail: %v\n", err)
+		return 1
+	case err != nil:
+		fmt.Fprintf(errOut, "riffle tail: LogAlert redaction off: %v\n", err)
+	}
+	if *rule != "" {
+		if err := applyRule(&o, alerts, *rule); err != nil {
+			fmt.Fprintf(errOut, "riffle tail: %v\n", err)
+			return 1
+		}
+	}
+	o.RedactFor = redactFor(alerts)
 	if err := tail.Run(ctx, cs, o, out, errOut); err != nil {
 		fmt.Fprintf(errOut, "riffle tail: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+// loadAlerts lists LogAlerts in ns, or nil if Riffle isn't installed.
+func loadAlerts(ctx context.Context, cfg *rest.Config, ns string) ([]rifflev1alpha1.LogAlert, error) {
+	scheme := runtime.NewScheme()
+	if err := rifflev1alpha1.AddToScheme(scheme); err != nil {
+		return nil, err
+	}
+	c, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		return nil, err
+	}
+	return listAlerts(ctx, c, ns)
 }

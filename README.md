@@ -33,6 +33,13 @@ api-7d9f-x2k4p/api {"level":"error","latency_ms":604,"msg":"upstream timeout"}
 api-7d9f-hw6fk/api {"level":"error","latency_ms":715,"msg":"upstream timeout"}
 ```
 
+With the operator installed, `tail` also applies the `redact` patterns of every LogAlert that selects a pod, and can tail a rule directly:
+
+```console
+$ riffle tail -n payments --rule api-timeouts
+api-7d9f-x2k4p/api {"level":"error","latency_ms":604,"msg":"upstream timeout",[REDACTED]}
+```
+
 Works against any cluster; the operator is optional.
 
 ## Alerts

@@ -64,7 +64,7 @@ func TestMergerOrdersWithinDelay(t *testing.T) {
 
 func runningPod(name, containerID string) *corev1.Pod {
 	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns"},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns", Labels: map[string]string{"app": "api"}},
 		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{
 			{Name: "app", ContainerID: containerID, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}},
 			{Name: "sidecar", ContainerID: containerID + "-s", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}},
@@ -93,7 +93,15 @@ func TestRunStreamsMatchingContainers(t *testing.T) {
 	var out, errOut syncBuf
 	done := make(chan error)
 	go func() {
-		done <- Run(ctx, cs, Options{Namespace: "ns", Container: "app", Filter: f, Delay: 10 * time.Millisecond}, &out, &errOut)
+		o := Options{Namespace: "ns", Container: "app", Filter: f, Delay: 10 * time.Millisecond}
+		o.RedactFor = func(l map[string]string) *filter.Filter {
+			if l["app"] != "api" {
+				return nil
+			}
+			r, _ := filter.Compile("", "", []string{"^fake"})
+			return r
+		}
+		done <- Run(ctx, cs, o, &out, &errOut)
 	}()
 
 	fw.Add(runningPod("p1", "id-1"))
@@ -110,7 +118,7 @@ func TestRunStreamsMatchingContainers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got, want := out.String(), "p1/app fake [REDACTED]\n"; got != want {
+	if got, want := out.String(), "p1/app [REDACTED] [REDACTED]\n"; got != want {
 		t.Errorf("out = %q, want %q (stderr %q)", got, want, errOut.String())
 	}
 }

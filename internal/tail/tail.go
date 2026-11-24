@@ -42,6 +42,8 @@ type Options struct {
 	Since     time.Duration
 	Filter    *filter.Filter
 	Delay     time.Duration // reorder window; lines are held this long before printing
+	// RedactFor returns extra redaction for a pod, by its labels. May be nil, and may return nil.
+	RedactFor func(podLabels map[string]string) *filter.Filter
 }
 
 // Line is one log line.
@@ -51,6 +53,7 @@ type Line struct {
 	Container string
 	Msg       string
 	arrived   time.Time
+	redact    *filter.Filter
 }
 
 // Run tails until ctx is done. Stream errors go to errOut and don't stop the run.
@@ -72,6 +75,9 @@ func Run(ctx context.Context, cs kubernetes.Interface, o Options, out, errOut io
 		case l := <-lines:
 			if o.Filter.Match(l.Msg) {
 				l.Msg = o.Filter.Redact(l.Msg)
+				if l.redact != nil {
+					l.Msg = l.redact.Redact(l.Msg)
+				}
 				l.arrived = time.Now()
 				m.push(l)
 			}
@@ -111,7 +117,11 @@ func watchPods(ctx context.Context, cs kubernetes.Interface, o Options, lines ch
 					continue
 				}
 				started[cst.ContainerID] = true
-				go stream(ctx, cs, o, pod.Name, cst.Name, lines, errOut)
+				var redact *filter.Filter
+				if o.RedactFor != nil {
+					redact = o.RedactFor(pod.Labels)
+				}
+				go stream(ctx, cs, o, pod.Name, cst.Name, redact, lines, errOut)
 			}
 		}
 		w.Stop()
@@ -123,7 +133,8 @@ func watchPods(ctx context.Context, cs kubernetes.Interface, o Options, lines ch
 
 // stream follows one container. A restart gets a new container ID and a new stream.
 // ponytail: a stream cut by a network error is not resumed; resume with SinceTime if it matters.
-func stream(ctx context.Context, cs kubernetes.Interface, o Options, pod, container string, lines chan<- Line, errOut io.Writer) {
+func stream(ctx context.Context, cs kubernetes.Interface, o Options, pod, container string, redact *filter.Filter,
+	lines chan<- Line, errOut io.Writer) {
 	opts := &corev1.PodLogOptions{Container: container, Follow: true, Timestamps: true}
 	if o.Since > 0 {
 		s := int64(o.Since.Seconds())
@@ -142,7 +153,7 @@ func stream(ctx context.Context, cs kubernetes.Interface, o Options, pod, contai
 	for sc.Scan() {
 		t, msg := parseLine(sc.Text())
 		select {
-		case lines <- Line{Time: t, Pod: pod, Container: container, Msg: msg}:
+		case lines <- Line{Time: t, Pod: pod, Container: container, Msg: msg, redact: redact}:
 		case <-ctx.Done():
 			return
 		}

@@ -89,6 +89,7 @@ func runTail(args []string, out, errOut io.Writer) int {
 	fs.Usage = func() {
 		fmt.Fprintln(errOut, "usage: riffle tail [-n ns] [-l selector] [-c container] [--match re] [--where expr]")
 		fmt.Fprintln(errOut, "       riffle tail [-n ns] --rule name")
+		fmt.Fprintln(errOut, "       riffle tail -i ...   interactive")
 		fs.PrintDefaults()
 	}
 	var (
@@ -100,6 +101,7 @@ func runTail(args []string, out, errOut io.Writer) int {
 		where     = fs.String("where", "", "JSON field filter, e.g. 'level=error AND latency_ms>500'")
 		since     = fs.Duration("since", time.Minute, "start this far back")
 		rule      = fs.String("rule", "", "use the selector, container, match, where and redact of this LogAlert")
+		tuiMode   = fs.Bool("i", false, "interactive: edit the filter live, ctrl+s saves it as LogAlert YAML")
 	)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -150,13 +152,19 @@ func runTail(args []string, out, errOut io.Writer) int {
 	case err != nil:
 		fmt.Fprintf(errOut, "riffle tail: LogAlert redaction off: %v\n", err)
 	}
+	var ruleRedact []string
 	if *rule != "" {
-		if err := applyRule(&o, alerts, *rule); err != nil {
+		spec, err := applyRule(&o, alerts, *rule)
+		if err != nil {
 			fmt.Fprintf(errOut, "riffle tail: %v\n", err)
 			return 1
 		}
+		*selector, *container, *match, *where, ruleRedact = o.Selector, o.Container, spec.Match, spec.Where, spec.Redact
 	}
 	o.RedactFor = redactFor(alerts)
+	if *tuiMode {
+		return runTUI(ctx, cs, o, newTUI(*ns, *selector, *container, *match, *where), ruleRedact, out, errOut)
+	}
 	if err := tail.Run(ctx, cs, o, out, errOut); err != nil {
 		fmt.Fprintf(errOut, "riffle tail: %v\n", err)
 		return 1

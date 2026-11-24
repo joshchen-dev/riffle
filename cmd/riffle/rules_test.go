@@ -73,7 +73,7 @@ func TestListAlerts(t *testing.T) {
 func TestApplyRule(t *testing.T) {
 	alerts := []rifflev1alpha1.LogAlert{la("other", "web"), la("errors", "api", `card=\d+`)}
 	o := tail.Options{Namespace: "pay"}
-	if err := applyRule(&o, alerts, "errors"); err != nil {
+	if _, err := applyRule(&o, alerts, "errors"); err != nil {
 		t.Fatal(err)
 	}
 	if o.Selector != "app=api" || o.Container != "c" {
@@ -86,12 +86,12 @@ func TestApplyRule(t *testing.T) {
 		t.Errorf("Redact = %q, want [REDACTED]", got)
 	}
 
-	if err := applyRule(&o, alerts, "missing"); err == nil {
+	if _, err := applyRule(&o, alerts, "missing"); err == nil {
 		t.Error("missing rule: want error")
 	}
 	bad := la("bad", "api")
 	bad.Spec.Where = "x>fast"
-	if err := applyRule(&o, []rifflev1alpha1.LogAlert{bad}, "bad"); err == nil {
+	if _, err := applyRule(&o, []rifflev1alpha1.LogAlert{bad}, "bad"); err == nil {
 		t.Error("invalid rule: want error")
 	}
 }

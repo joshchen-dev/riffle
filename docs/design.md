@@ -101,8 +101,9 @@ Standalone, it uses kubeconfig and the `pods/log` API. If it finds the `riffle.j
     riffle tail [-n ns] [-l sel] [-c container] [--match re] [--where expr]
                 [--since 1m] [-i]
     riffle tail --rule <name>          # selector/match/where/redact from a LogAlert
-    riffle alert new <name> --match .. --where .. --count 20 --window 5m [--apply]
-    riffle alerts                      # list LogAlerts + Ready/Firing
+    riffle alert new <name> -l sel --match .. --where .. --count 20 --window 5m [--create]
+                                       # prints YAML (for Git) unless --create
+    riffle alerts [-n ns | -A]         # Ready, Firing, pods, threshold, last match
     riffle version
 
 - Timeline: streams use `timestamps=true` and go through a 250ms reorder buffer, then the CLI prints one merged, ordered output with a pod/container prefix.

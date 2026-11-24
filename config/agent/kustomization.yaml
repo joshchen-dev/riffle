@@ -1,0 +1,15 @@
+# Node agent. Installed next to config/default by `make deploy`.
+# Separate namespace: hostPath needs the privileged Pod Security level, the operator doesn't.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: riffle-agent
+namePrefix: riffle-
+labels:
+- pairs:
+    app.kubernetes.io/component: agent
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: riffle
+resources:
+- namespace.yaml
+- rbac.yaml
+- daemonset.yaml

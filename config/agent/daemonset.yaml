@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: agent
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: agent
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 10%
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: agent
+    spec:
+      serviceAccountName: agent
+      priorityClassName: system-node-critical
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: agent
+        image: controller:latest
+        command: [/agent]
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        ports:
+        - name: metrics
+          containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: metrics
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            memory: 128Mi
+        securityContext:
+          # Root reads the root-owned files in /var/log/pods; nothing else is granted.
+          runAsUser: 0
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - name: pods
+          mountPath: /var/log/pods
+          readOnly: true
+      volumes:
+      - name: pods
+        hostPath:
+          path: /var/log/pods
+          type: Directory

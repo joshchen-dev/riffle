@@ -24,23 +24,32 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rifflev1alpha1 "github.com/joshchen-dev/riffle/api/v1alpha1"
+	"github.com/joshchen-dev/riffle/internal/aggregator"
 )
 
 var _ = Describe("LogAlert controller", func() {
 	var (
-		ns string
-		r  *LogAlertReconciler
+		ns  string
+		r   *LogAlertReconciler
+		rec *events.FakeRecorder
+		now time.Time
 	)
 
 	BeforeEach(func() {
 		n := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "la-"}}
 		Expect(k8sClient.Create(ctx, n)).To(Succeed())
 		ns = n.Name
-		r = &LogAlertReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+		rec = events.NewFakeRecorder(10)
+		now = time.Now().Truncate(time.Second)
+		r = &LogAlertReconciler{
+			Client: k8sClient, Scheme: k8sClient.Scheme(),
+			Counts: aggregator.NewStore(), Recorder: rec, Now: func() time.Time { return now },
+		}
 	})
 
 	alert := func(name string, mutate func(*rifflev1alpha1.LogAlertSpec)) *rifflev1alpha1.LogAlert {
@@ -115,9 +124,70 @@ var _ = Describe("LogAlert controller", func() {
 		Expect(c.Reason).To(Equal(rifflev1alpha1.ReasonSuspended))
 	})
 
-	It("ignores a deleted LogAlert", func() {
-		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKey{Namespace: ns, Name: "gone"}})
+	It("ignores a deleted LogAlert and forgets its counts", func() {
+		key := client.ObjectKey{Namespace: ns, Name: "gone"}
+		r.Counts.Add(aggregator.Report{Buckets: []aggregator.Bucket{{Namespace: ns, Rule: "gone", Start: now, Count: 1}}})
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
 		Expect(err).NotTo(HaveOccurred())
+		_, _, _, active := r.Counts.Window(key, time.Hour, now)
+		Expect(active).To(BeFalse())
+	})
+
+	It("fires once when the window reaches the threshold and resolves as it slides", func() {
+		la := alert("hot", nil) // 20 in 5m
+		got, _ := reconcileReady(la)
+		Expect(meta.FindStatusCondition(got.Status.Conditions, rifflev1alpha1.ConditionFiring).Reason).
+			To(Equal(rifflev1alpha1.ReasonBelowThreshold))
+
+		key := client.ObjectKeyFromObject(la)
+		push := func(node string, n int64, sample string) {
+			r.Counts.Add(aggregator.Report{Node: node, Buckets: []aggregator.Bucket{
+				{Namespace: ns, Rule: "hot", Start: now, Count: n, Last: now, Sample: sample},
+			}})
+		}
+		reconcileFiring := func() (*rifflev1alpha1.LogAlert, *metav1.Condition, reconcile.Result) {
+			res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+			got := &rifflev1alpha1.LogAlert{}
+			Expect(k8sClient.Get(ctx, key, got)).To(Succeed())
+			return got, meta.FindStatusCondition(got.Status.Conditions, rifflev1alpha1.ConditionFiring), res
+		}
+
+		push("n1", 12, "card=[REDACTED] timeout")
+		got, c, res := reconcileFiring()
+		Expect(c.Status).To(Equal(metav1.ConditionFalse))
+		Expect(got.Status.LastMatchTime.Time).To(BeTemporally("==", now))
+		Expect(res.RequeueAfter).To(Equal(aggregator.BucketSize))
+
+		push("n2", 8, "second")
+		got, c, _ = reconcileFiring()
+		Expect(c.Status).To(Equal(metav1.ConditionTrue))
+		Expect(c.Reason).To(Equal(rifflev1alpha1.ReasonThresholdExceeded))
+		Expect(got.Status.LastFiredTime.Time).To(BeTemporally("==", now))
+		Expect(rec.Events).To(Receive(Equal("Warning ThresholdExceeded 20 matches in 5m0s, threshold 20. Last: second")))
+
+		// Still firing: no second Event.
+		_, c, _ = reconcileFiring()
+		Expect(c.Status).To(Equal(metav1.ConditionTrue))
+		Expect(rec.Events).NotTo(Receive())
+
+		now = now.Add(6 * time.Minute)
+		_, c, res = reconcileFiring()
+		Expect(c.Status).To(Equal(metav1.ConditionFalse))
+		Expect(res.RequeueAfter).To(Equal(aggregator.BucketSize)) // buckets kept for MaxWindow
+
+		now = now.Add(time.Hour)
+		_, _, res = reconcileFiring()
+		Expect(res.RequeueAfter).To(BeZero())
+	})
+
+	It("doesn't evaluate a suspended rule", func() {
+		r.Counts.Add(aggregator.Report{Buckets: []aggregator.Bucket{{Namespace: ns, Rule: "off", Start: now, Count: 100}}})
+		got, _ := reconcileReady(alert("off", func(s *rifflev1alpha1.LogAlertSpec) { s.Suspend = true }))
+		c := meta.FindStatusCondition(got.Status.Conditions, rifflev1alpha1.ConditionFiring)
+		Expect(c.Status).To(Equal(metav1.ConditionFalse))
+		Expect(c.Reason).To(Equal(rifflev1alpha1.ReasonNotEvaluated))
+		Expect(rec.Events).NotTo(Receive())
 	})
 
 	DescribeTable("CRD rejects",

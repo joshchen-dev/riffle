@@ -1,0 +1,18 @@
+# Agents push match counts here.
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/name: riffle
+    app.kubernetes.io/managed-by: kustomize
+  name: counts
+  namespace: system
+spec:
+  ports:
+  - name: counts
+    port: 8082
+    targetPort: counts
+  selector:
+    control-plane: controller-manager
+    app.kubernetes.io/name: riffle

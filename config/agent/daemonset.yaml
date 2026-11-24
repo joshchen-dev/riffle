@@ -53,8 +53,19 @@ spec:
         - name: pods
           mountPath: /var/log/pods
           readOnly: true
+        - name: token
+          mountPath: /var/run/secrets/riffle
+          readOnly: true
       volumes:
       - name: pods
         hostPath:
           path: /var/log/pods
           type: Directory
+      # Only valid for the operator's counts endpoint, not the API server.
+      - name: token
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+              audience: riffle-operator
+              expirationSeconds: 600

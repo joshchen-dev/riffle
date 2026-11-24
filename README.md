@@ -49,7 +49,7 @@ Works against any cluster; the operator is optional.
 | M1 CRD, validation, status | ✅ v0.1 |
 | M2 `riffle tail` (multi-pod, `--where`) | ✅ v0.2 |
 | M3 node agent (`/var/log/pods`), metrics | ✅ v0.5 |
-| M4 threshold aggregation, `Firing`, Events | |
+| M4 threshold aggregation, `Firing`, Events | ✅ v0.6 |
 | M5 CLI ↔ operator integration | |
 | M6 interactive TUI | |
 | M7 S3 archive (Terraform) | |

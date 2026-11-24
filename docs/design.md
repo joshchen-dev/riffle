@@ -67,11 +67,13 @@ LogAlert controller (watches LogAlert, and Pods mapped to the LogAlerts that sel
 Agent deployment: static manifests in `config/agent` (namespace with privileged Pod Security, ServiceAccount, read-only ClusterRole, DaemonSet), installed by `make deploy` / Argo CD. The operator doesn't create the DaemonSet or grant RBAC, so it never needs `escalate`/`bind`, and everything stays in Git. Upgrade path if scale-to-zero matters: an operator-managed DaemonSet.
 
 Aggregator (runs in the operator):
-- Agents POST `{rule, node, bucketStart, count, sample}` every 10s.
-- For each rule, the operator keeps a ring of buckets in memory and sums them over the window.
-- Crossing the threshold sets Firing=True and records a Warning Event `ThresholdExceeded` on the LogAlert, with the redacted sample truncated to 256 chars.
-- Dropping back below sets Firing=False.
-- Ceiling: the window lives in memory, so a restart resets it. That's acceptable for windows of 1h or less.
+- Each agent counts matches per rule in 10s buckets and POSTs them to `riffle-counts:8082/v1/counts` every 10s.
+- The current bucket is resent until it closes; a resent bucket replaces the old value, so retries don't double count. Unsent buckets are kept for 1h.
+- Auth: a projected ServiceAccount token with audience `riffle-operator`, checked with a TokenReview. Only the agent's ServiceAccount is accepted. The token can't be used against the API server.
+- New counts trigger a reconcile, which sums the rule's buckets over its window. While buckets exist it re-evaluates every 10s, so alerts resolve as the window slides.
+- Reaching the threshold sets Firing=True and `lastFiredTime`, and records one Warning Event `ThresholdExceeded` on the LogAlert with the redacted sample (max 256 bytes).
+- Dropping below sets Firing=False. A rule that isn't Ready is `NotEvaluated`.
+- Ceiling: the window lives in memory, so an operator restart resets it. That's acceptable for windows of 1h or less.
 
 ## Reading logs: `/var/log/pods` vs kubelet API
 
@@ -143,7 +145,8 @@ Standalone, it uses kubeconfig and the `pods/log` API. If it finds the `riffle.j
 
 - **Agent CPU at high volume.** Every line is checked against every rule that selects the pod. Mitigations: index rules per pod, use literal prefilters, count dropped lines.
 - **Rotation/partial-line bugs.** Covered by a fixture-based test suite for CRI files.
-- **Operator as single aggregator.** Counts are lost while it is down, and the window resets on restart. Upgrade path: leader-elected HA with agents pushing to the leader Service.
-- **hostPath + privileged PSA** on the agent namespace. Mitigations: mount read-only, run as non-root, drop all capabilities.
+- **Operator as single aggregator.** Alerts are late while it is down (agents hold counts for 1h), and the window resets on restart. Upgrade path: leader-elected HA with agents pushing to the leader Service.
+- **Plain HTTP counts endpoint.** A sniffed token lets someone push fake counts until it expires (10 min). Upgrade path: TLS on the endpoint.
+- **hostPath + privileged PSA** on the agent namespace. Mitigations: mount read-only, read-only root filesystem, drop all capabilities.
 - **Cardinality.** User-controlled rule names in labels, bounded by the number of LogAlerts.
 - **S3 creds on k3s.** No IRSA there. Use IAM Roles Anywhere or a scoped IAM user. Decide at M7.

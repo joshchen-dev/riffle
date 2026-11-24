@@ -17,25 +17,33 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
+	"net/http"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	authnv1 "k8s.io/api/authentication/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	rifflev1alpha1 "github.com/joshchen-dev/riffle/api/v1alpha1"
+	"github.com/joshchen-dev/riffle/internal/aggregator"
 	"github.com/joshchen-dev/riffle/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
@@ -63,6 +71,10 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
+	var countsAddr, agentUser string
+	flag.StringVar(&countsAddr, "counts-bind-address", ":8082", "The address agents push match counts to.")
+	flag.StringVar(&agentUser, "agent-user", "system:serviceaccount:riffle-agent:riffle-agent",
+		"The only user allowed to push counts.")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -182,11 +194,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	counts := aggregator.NewStore()
 	if err := (&controller.LogAlertReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Counts:   counts,
+		Recorder: mgr.GetEventRecorder("riffle-operator"),
+		Now:      time.Now,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "logalert")
+		os.Exit(1)
+	}
+	if err := mgr.Add(countsServer(countsAddr, counts, mgr.GetClient(), agentUser)); err != nil {
+		setupLog.Error(err, "Failed to add counts server")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
@@ -204,5 +224,35 @@ func main() {
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
+	}
+}
+
+// +kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
+
+// countsServer serves aggregator.Path to agents.
+// ponytail: plain HTTP; a sniffed token only lets someone push counts until it expires (audience-bound, short-lived).
+func countsServer(addr string, s *aggregator.Store, c client.Client, user string) manager.RunnableFunc {
+	review := func(ctx context.Context, token string) (string, error) {
+		tr := &authnv1.TokenReview{Spec: authnv1.TokenReviewSpec{Token: token, Audiences: []string{aggregator.Audience}}}
+		if err := c.Create(ctx, tr); err != nil {
+			return "", err
+		}
+		if !tr.Status.Authenticated {
+			return "", errors.New(tr.Status.Error)
+		}
+		return tr.Status.User.Username, nil
+	}
+	mux := http.NewServeMux()
+	mux.Handle(aggregator.Path, s.Handler(review, user))
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	return func(ctx context.Context) error {
+		go func() {
+			<-ctx.Done()
+			_ = srv.Shutdown(context.Background())
+		}()
+		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
 	}
 }

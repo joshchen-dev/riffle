@@ -14,14 +14,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package agent runs on every node, follows the log files of pods that LogAlerts select
-// and counts matches as Prometheus metrics.
+// Package agent runs on every node, follows the log files of pods that LogAlerts select,
+// counts matches as Prometheus metrics and pushes per-rule counts to the operator.
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	rifflev1alpha1 "github.com/joshchen-dev/riffle/api/v1alpha1"
+	"github.com/joshchen-dev/riffle/internal/aggregator"
 	"github.com/joshchen-dev/riffle/internal/crilog"
 	"github.com/joshchen-dev/riffle/pkg/filter"
 )
@@ -69,6 +75,14 @@ type Agent struct {
 	ctx       context.Context
 	followers map[string]*follower // by file path
 	compiled  map[types.UID]compiledRule
+
+	mu      sync.Mutex
+	buckets map[bucketKey]*aggregator.Bucket
+}
+
+type bucketKey struct {
+	namespace, rule string
+	start           time.Time
 }
 
 type rule struct {
@@ -98,6 +112,7 @@ func New(ctx context.Context, logDir string, reg prometheus.Registerer) *Agent {
 		ctx:       ctx,
 		followers: map[string]*follower{},
 		compiled:  map[types.UID]compiledRule{},
+		buckets:   map[bucketKey]*aggregator.Bucket{},
 	}
 }
 
@@ -144,12 +159,82 @@ func (a *Agent) start(path, container string, fromStart bool) *follower {
 			a.Metrics.Bytes.Add(float64(len(e.Msg)))
 			for _, r := range *fl.rules.Load() {
 				if r.filter.Match(e.Msg) {
+					a.count(r, r.filter.Redact(e.Msg)) // before the metric, so tests that wait on it see the bucket
 					a.Metrics.Matches.WithLabelValues(r.namespace, r.name, container).Inc()
 				}
 			}
 		})
 	}()
 	return fl
+}
+
+// count adds a match to the rule's current bucket.
+func (a *Agent) count(r *rule, sample string) {
+	now := time.Now()
+	k := bucketKey{r.namespace, r.name, now.Truncate(aggregator.BucketSize)}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	b := a.buckets[k]
+	if b == nil {
+		b = &aggregator.Bucket{Namespace: r.namespace, Rule: r.name, Start: k.start}
+		a.buckets[k] = b
+	}
+	b.Count++
+	b.Last = now
+	b.Sample = sample
+}
+
+// Push sends every bucket to url as node, authenticated with the token in tokenFile.
+// Buckets that are complete are dropped once sent; the current one is sent again next time.
+// Unsent buckets are kept for aggregator.MaxWindow.
+func (a *Agent) Push(ctx context.Context, url, tokenFile, node string) error {
+	now := time.Now()
+	r := aggregator.Report{Node: node}
+	a.mu.Lock()
+	for k, b := range a.buckets {
+		if k.start.Before(now.Add(-aggregator.MaxWindow)) {
+			delete(a.buckets, k)
+			continue
+		}
+		r.Buckets = append(r.Buckets, *b)
+	}
+	a.mu.Unlock()
+	if len(r.Buckets) == 0 {
+		return nil
+	}
+
+	token, err := os.ReadFile(tokenFile) // re-read: the kubelet rotates it
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+string(bytes.TrimSpace(token)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("push counts: %s", resp.Status)
+	}
+
+	current := now.Truncate(aggregator.BucketSize)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for k := range a.buckets {
+		if k.start.Before(current) {
+			delete(a.buckets, k)
+		}
+	}
+	return nil
 }
 
 // rulesByNamespace compiles alerts, reusing the previous result while the generation is unchanged.

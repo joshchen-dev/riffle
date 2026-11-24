@@ -1,2 +1,3 @@
 resources:
 - manager.yaml
+- counts_service.yaml

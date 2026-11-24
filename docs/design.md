@@ -7,7 +7,6 @@ Log rules as Kubernetes resources. Teams declare `LogAlert`s. A node agent match
     ┌──────────── control plane ────────────┐
     │ riffle-operator (Deployment, 1 rep)   │
     │  - validates LogAlerts → .status      │
-    │  - owns agent DaemonSet               │
     │  - aggregates counts → Firing, Events │
     └───────▲───────────────────────────────┘
             │ POST /v1/counts (10s buckets)
@@ -65,7 +64,7 @@ LogAlert controller (watches LogAlert, and Pods mapped to the LogAlerts that sel
 5. Ready=True/Valid. Set `observedGeneration`.
 6. Status patch only. Requeue: none. Events and the Pod watch drive it.
 
-Agent controller (singleton): ensure the DaemonSet, ServiceAccount, RBAC and Service match the desired spec.
+Agent deployment: static manifests in `config/agent` (namespace with privileged Pod Security, ServiceAccount, read-only ClusterRole, DaemonSet), installed by `make deploy` / Argo CD. The operator doesn't create the DaemonSet or grant RBAC, so it never needs `escalate`/`bind`, and everything stays in Git. Upgrade path if scale-to-zero matters: an operator-managed DaemonSet.
 
 Aggregator (runs in the operator):
 - Agents POST `{rule, node, bucketStart, count, sample}` every 10s.
@@ -133,7 +132,7 @@ Standalone, it uses kubeconfig and the `pods/log` API. If it finds the `riffle.j
 1. **M0** scaffold: kubebuilder layout, CLI skeleton, Makefile, CI (lint, unit, envtest, image), README, VERSION check.
 2. **M1** CRD + LogAlert controller (validation, status), envtest coverage.
 3. **M2** `riffle tail` standalone: multi-pod merge, `--match`, `--where`, `pkg/filter`.
-4. **M3** agent: CRI tailing, rotation, metrics. DaemonSet managed by the operator. Runs on k3d.
+4. **M3** agent: CRI tailing, rotation, metrics. DaemonSet from static manifests. Runs on k3d.
 5. **M4** aggregation: Firing condition, Events.
 6. **M5** CLI ↔ operator: `--rule`, redaction, `alert new`, `alerts`.
 7. **M6** `tail -i` TUI.

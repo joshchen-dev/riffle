@@ -33,6 +33,8 @@ jobs:
         run: make test
       - name: generated files up to date
         run: git diff --exit-code
+      - name: manifests render
+        run: make kustomize && bin/kustomize build config/default >/dev/null && bin/kustomize build config/agent >/dev/null
 
   image:
     runs-on: ubuntu-latest

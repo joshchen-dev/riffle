@@ -48,7 +48,7 @@ Works against any cluster; the operator is optional.
 | M0 scaffold, CI | ✅ v0.1 |
 | M1 CRD, validation, status | ✅ v0.1 |
 | M2 `riffle tail` (multi-pod, `--where`) | ✅ v0.2 |
-| M3 node agent (`/var/log/pods`), metrics | |
+| M3 node agent (`/var/log/pods`), metrics | ✅ v0.5 |
 | M4 threshold aggregation, `Firing`, Events | |
 | M5 CLI ↔ operator integration | |
 | M6 interactive TUI | |
@@ -63,7 +63,7 @@ Design: [docs/design.md](docs/design.md)
 k3d cluster create riffle
 make docker-build IMG=riffle-operator:dev
 k3d image import riffle-operator:dev -c riffle
-make deploy IMG=riffle-operator:dev
+make deploy IMG=riffle-operator:dev   # operator + node agent
 kubectl apply -n default -f config/samples/riffle_v1alpha1_logalert.yaml
 ```
 

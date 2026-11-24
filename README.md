@@ -58,6 +58,10 @@ Log line to webhook: **p50 0.5s** on k3d (`hack/bench-latency.sh`).
 - Loki stores and searches logs, which means running a log store.
 - Riffle sits between the two. Rules are namespaced CRDs, so they're reviewed in Git, scoped by RBAC and deployed with Argo CD. The CLI and the operator share one filter engine, so an ad-hoc filter turns into an alert unchanged.
 
+## Architecture
+
+![Riffle architecture](docs/architecture.svg)
+
 ## Status
 
 | Milestone | |

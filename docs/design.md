@@ -4,19 +4,9 @@ Log rules as Kubernetes resources. Teams declare `LogAlert`s. A node agent match
 
 ## Architecture
 
-    ┌──────────── control plane ────────────┐
-    │ riffle-operator (Deployment, 1 rep)   │
-    │  - validates LogAlerts → .status      │
-    │  - aggregates counts → Firing, Events │
-    └───────▲───────────────────────────────┘
-            │ POST /v1/counts (10s buckets)
-    ┌───────┴──── each node ────────────────┐
-    │ riffle-agent (DaemonSet)              │
-    │  - watches LogAlerts + pods on node   │
-    │  - tails /var/log/pods (read-only)    │
-    │  - match → redact → count, /metrics   │
-    └───────────────────────────────────────┘
-    riffle CLI ── pods/log API ── any cluster (operator optional)
+![Riffle architecture](architecture.svg)
+
+Source: [architecture.excalidraw](architecture.excalidraw). Open it at excalidraw.com, edit, and export the SVG over `architecture.svg`.
 
 - `pkg/filter`: shared by agent and CLI. Regex (RE2) + `where` expressions + redaction. That makes CLI filters and LogAlerts mean the same thing.
 - Agents read LogAlerts and their own node's pods from an informer cache and reconcile file followers every 2s. No compiled ConfigMap in between.

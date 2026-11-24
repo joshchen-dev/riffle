@@ -53,7 +53,7 @@ func main() {
 		"where match counts are pushed")
 	flag.StringVar(&push.tokenFile, "token-file", "/var/run/secrets/riffle/token",
 		"token with audience "+aggregator.Audience)
-	flag.DurationVar(&push.interval, "push-interval", aggregator.BucketSize, "how often to push counts")
+	flag.DurationVar(&push.interval, "push-interval", time.Second, "how often to push counts if anything matched")
 	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()

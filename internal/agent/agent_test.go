@@ -214,6 +214,10 @@ func TestPush(t *testing.T) {
 	if len(a.buckets) != 1 {
 		t.Errorf("after push: %d buckets, want 1 (current only)", len(a.buckets))
 	}
+	n := len(got)
+	if err := a.Push(t.Context(), srv.URL, tokenFile, "n1"); err != nil || len(got) != n {
+		t.Errorf("push without new matches: err %v, sent %v; want nil, nothing sent", err, len(got) > n)
+	}
 	rep := got[len(got)-1]
 	if rep.Node != "n1" || len(rep.Buckets) != 2 {
 		t.Fatalf("report = %+v, want node n1 with 2 buckets", rep)
@@ -226,6 +230,7 @@ func TestPush(t *testing.T) {
 			t.Errorf("current bucket = %+v, want count 2 and the last sample", b)
 		}
 	}
+	a.count(r, "")
 	if err := a.Push(t.Context(), srv.URL, filepath.Join(t.TempDir(), "missing"), "n1"); err == nil {
 		t.Error("push with missing token file: want error")
 	}

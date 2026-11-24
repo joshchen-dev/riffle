@@ -39,6 +39,7 @@ import (
 
 	rifflev1alpha1 "github.com/joshchen-dev/riffle/api/v1alpha1"
 	"github.com/joshchen-dev/riffle/internal/aggregator"
+	"github.com/joshchen-dev/riffle/internal/notify"
 	"github.com/joshchen-dev/riffle/pkg/filter"
 )
 
@@ -48,6 +49,7 @@ type LogAlertReconciler struct {
 	Scheme   *runtime.Scheme
 	Counts   *aggregator.Store
 	Recorder events.EventRecorder
+	Notify   func(notify.Alert)
 	Now      func() time.Time
 }
 
@@ -128,8 +130,9 @@ func (r *LogAlertReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			result.RequeueAfter = aggregator.BucketSize
 		}
 	}
-	fired := firing.Status == metav1.ConditionTrue &&
-		!meta.IsStatusConditionTrue(la.Status.Conditions, rifflev1alpha1.ConditionFiring)
+	wasFiring := meta.IsStatusConditionTrue(la.Status.Conditions, rifflev1alpha1.ConditionFiring)
+	fired := firing.Status == metav1.ConditionTrue && !wasFiring
+	resolved := firing.Status == metav1.ConditionFalse && wasFiring
 	if fired {
 		status.LastFiredTime = &metav1.Time{Time: now}
 	}
@@ -142,9 +145,24 @@ func (r *LogAlertReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.Status().Update(ctx, &la); err != nil {
 		return ctrl.Result{}, err
 	}
-	if fired {
+	th := la.Spec.Threshold
+	alert := notify.Alert{
+		Namespace: la.Namespace, Rule: la.Name, Count: sum, Threshold: th.Count,
+		Window: th.Window.Duration.String(), Time: now,
+	}
+	switch {
+	case fired:
 		r.Recorder.Eventf(&la, nil, corev1.EventTypeWarning, rifflev1alpha1.ReasonThresholdExceeded, "Evaluate",
-			"%d matches in %s, threshold %d. Last: %s", sum, la.Spec.Threshold.Window.Duration, la.Spec.Threshold.Count, sample)
+			"%d matches in %s, threshold %d. Last: %s", sum, th.Window.Duration, th.Count, sample)
+		alert.Status, alert.Sample = notify.Firing, sample
+		alert.Text = fmt.Sprintf("🔥 %s/%s: %d matches in %s (threshold %d)\n%s", la.Namespace, la.Name, sum, th.Window.Duration, th.Count, sample)
+		r.Notify(alert)
+	case resolved:
+		r.Recorder.Eventf(&la, nil, corev1.EventTypeNormal, "Resolved", "Evaluate",
+			"%d matches in %s, threshold %d", sum, th.Window.Duration, th.Count)
+		alert.Status = notify.Resolved
+		alert.Text = fmt.Sprintf("✅ %s/%s resolved", la.Namespace, la.Name)
+		r.Notify(alert)
 	}
 	logf.FromContext(ctx).V(1).Info("Updated status", "ready", ready.Reason, "firing", firing.Reason, "matchedPods", status.MatchedPods)
 	return result, nil

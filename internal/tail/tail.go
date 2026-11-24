@@ -44,6 +44,8 @@ type Options struct {
 	Delay     time.Duration // reorder window; lines are held this long before printing
 	// RedactFor returns extra redaction for a pod, by its labels. May be nil, and may return nil.
 	RedactFor func(podLabels map[string]string) *filter.Filter
+	// Sink receives lines in order instead of out. Optional.
+	Sink func(Line)
 }
 
 // Line is one log line.
@@ -51,7 +53,8 @@ type Line struct {
 	Time      time.Time
 	Pod       string
 	Container string
-	Msg       string
+	Msg       string // redacted
+	Raw       string // as read; for matching, never printed
 	arrived   time.Time
 	redact    *filter.Filter
 }
@@ -67,6 +70,10 @@ func Run(ctx context.Context, cs kubernetes.Interface, o Options, out, errOut io
 	defer tick.Stop()
 	print := func(ls []Line) {
 		for _, l := range ls {
+			if o.Sink != nil {
+				o.Sink(l)
+				continue
+			}
 			fmt.Fprintf(out, "%s/%s %s\n", l.Pod, l.Container, l.Msg)
 		}
 	}
@@ -74,6 +81,7 @@ func Run(ctx context.Context, cs kubernetes.Interface, o Options, out, errOut io
 		select {
 		case l := <-lines:
 			if o.Filter.Match(l.Msg) {
+				l.Raw = l.Msg
 				l.Msg = o.Filter.Redact(l.Msg)
 				if l.redact != nil {
 					l.Msg = l.redact.Redact(l.Msg)

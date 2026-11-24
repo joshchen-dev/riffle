@@ -42,6 +42,8 @@ api-7d9f-x2k4p/api {"level":"error","latency_ms":604,"msg":"upstream timeout",[R
 
 Works against any cluster; the operator is optional.
 
+`riffle tail -i` opens an interactive view: edit `match` and `where` live over the last 10,000 lines, then `ctrl+s` prints the filter as LogAlert YAML.
+
 Turn a filter into a rule, and check on rules:
 
 ```console
@@ -84,7 +86,7 @@ Log line to webhook: **p50 0.5s** on k3d (`hack/bench-latency.sh`).
 | M4 threshold aggregation, `Firing`, Events | ✅ v0.6 |
 | M4.1 webhook alerts, latency benchmark | ✅ v0.7 |
 | M5 CLI ↔ operator integration | ✅ v0.9 |
-| M6 interactive TUI | |
+| M6 interactive TUI | ✅ v0.10 |
 | M7 S3 archive (Terraform) | |
 | M8 homelab: RHEL/k3s + Argo CD | |
 

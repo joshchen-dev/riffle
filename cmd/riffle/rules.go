@@ -42,8 +42,8 @@ func listAlerts(ctx context.Context, c client.Reader, ns string) ([]rifflev1alph
 	return l.Items, nil
 }
 
-// applyRule sets o's selector, container and filter from the LogAlert called name.
-func applyRule(o *tail.Options, alerts []rifflev1alpha1.LogAlert, name string) error {
+// applyRule sets o's selector, container and filter from the LogAlert called name and returns its spec.
+func applyRule(o *tail.Options, alerts []rifflev1alpha1.LogAlert, name string) (*rifflev1alpha1.LogAlertSpec, error) {
 	for i := range alerts {
 		la := &alerts[i]
 		if la.Name != name {
@@ -51,16 +51,16 @@ func applyRule(o *tail.Options, alerts []rifflev1alpha1.LogAlert, name string) e
 		}
 		sel, err := metav1.LabelSelectorAsSelector(&la.Spec.Selector)
 		if err != nil {
-			return fmt.Errorf("rule %s: %w", name, err)
+			return nil, fmt.Errorf("rule %s: %w", name, err)
 		}
 		f, err := filter.Compile(la.Spec.Match, la.Spec.Where, la.Spec.Redact)
 		if err != nil {
-			return fmt.Errorf("rule %s: %w", name, err)
+			return nil, fmt.Errorf("rule %s: %w", name, err)
 		}
 		o.Selector, o.Container, o.Filter = sel.String(), la.Spec.Container, f
-		return nil
+		return &la.Spec, nil
 	}
-	return fmt.Errorf("no LogAlert %q in namespace %s", name, o.Namespace)
+	return nil, fmt.Errorf("no LogAlert %q in namespace %s", name, o.Namespace)
 }
 
 // redactFor returns the redact patterns of every alert that selects a pod.

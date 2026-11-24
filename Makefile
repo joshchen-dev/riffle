@@ -82,8 +82,9 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 ##@ Build
 
 .PHONY: build
-build: manifests generate fmt vet ## Build manager and riffle CLI binaries.
+build: manifests generate fmt vet ## Build manager, agent and riffle CLI binaries.
 	go build -o bin/manager cmd/main.go
+	go build -o bin/agent ./cmd/agent
 	go build -ldflags "$(LDFLAGS)" -o bin/riffle ./cmd/riffle
 
 .PHONY: run

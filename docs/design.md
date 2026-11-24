@@ -107,7 +107,7 @@ Standalone, it uses kubeconfig and the `pods/log` API. If it finds the `riffle.j
 
 - Timeline: streams use `timestamps=true` and go through a 250ms reorder buffer, then the CLI prints one merged, ordered output with a pod/container prefix.
 - Pods are watched, so pods created after the start (rollouts, restarts) are picked up.
-- Redaction: when the operator is installed, the CLI applies the `redact` patterns of every LogAlert that selects the pod.
+- Redaction: when the operator is installed, the CLI applies the `redact` patterns of every LogAlert that selects the pod. LogAlerts are read once at start. If they can't be read, `tail` warns and runs without them; `--rule` fails.
 - `-i`: a TUI (bubbletea) with an editable filter line. The `a` key exports the current filter as LogAlert YAML.
 
 ## Metrics

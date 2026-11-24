@@ -78,6 +78,8 @@ type Agent struct {
 
 	mu      sync.Mutex
 	buckets map[bucketKey]*aggregator.Bucket
+	changes uint64 // matches counted so far
+	pushed  uint64 // changes at the last successful push
 }
 
 type bucketKey struct {
@@ -182,9 +184,11 @@ func (a *Agent) count(r *rule, sample string) {
 	b.Count++
 	b.Last = now
 	b.Sample = sample
+	a.changes++
 }
 
-// Push sends every bucket to url as node, authenticated with the token in tokenFile.
+// Push sends every bucket to url as node, authenticated with the token in tokenFile,
+// if anything matched since the last successful push.
 // Buckets that are complete are dropped once sent; the current one is sent again next time.
 // Unsent buckets are kept for aggregator.MaxWindow.
 func (a *Agent) Push(ctx context.Context, url, tokenFile, node string) error {
@@ -198,8 +202,9 @@ func (a *Agent) Push(ctx context.Context, url, tokenFile, node string) error {
 		}
 		r.Buckets = append(r.Buckets, *b)
 	}
+	changes := a.changes
 	a.mu.Unlock()
-	if len(r.Buckets) == 0 {
+	if changes == a.pushed || len(r.Buckets) == 0 {
 		return nil
 	}
 
@@ -226,6 +231,7 @@ func (a *Agent) Push(ctx context.Context, url, tokenFile, node string) error {
 		return fmt.Errorf("push counts: %s", resp.Status)
 	}
 
+	a.pushed = changes
 	current := now.Truncate(aggregator.BucketSize)
 	a.mu.Lock()
 	defer a.mu.Unlock()

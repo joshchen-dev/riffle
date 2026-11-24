@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	. "github.com/onsi/gomega/gstruct"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,14 +31,16 @@ import (
 
 	rifflev1alpha1 "github.com/joshchen-dev/riffle/api/v1alpha1"
 	"github.com/joshchen-dev/riffle/internal/aggregator"
+	"github.com/joshchen-dev/riffle/internal/notify"
 )
 
 var _ = Describe("LogAlert controller", func() {
 	var (
-		ns  string
-		r   *LogAlertReconciler
-		rec *events.FakeRecorder
-		now time.Time
+		ns   string
+		r    *LogAlertReconciler
+		rec  *events.FakeRecorder
+		sent []notify.Alert
+		now  time.Time
 	)
 
 	BeforeEach(func() {
@@ -49,7 +52,9 @@ var _ = Describe("LogAlert controller", func() {
 		r = &LogAlertReconciler{
 			Client: k8sClient, Scheme: k8sClient.Scheme(),
 			Counts: aggregator.NewStore(), Recorder: rec, Now: func() time.Time { return now },
+			Notify: func(a notify.Alert) { sent = append(sent, a) },
 		}
+		sent = nil
 	})
 
 	alert := func(name string, mutate func(*rifflev1alpha1.LogAlertSpec)) *rifflev1alpha1.LogAlert {
@@ -165,15 +170,24 @@ var _ = Describe("LogAlert controller", func() {
 		Expect(c.Reason).To(Equal(rifflev1alpha1.ReasonThresholdExceeded))
 		Expect(got.Status.LastFiredTime.Time).To(BeTemporally("==", now))
 		Expect(rec.Events).To(Receive(Equal("Warning ThresholdExceeded 20 matches in 5m0s, threshold 20. Last: second")))
+		Expect(sent).To(HaveLen(1))
+		Expect(sent[0]).To(MatchFields(IgnoreExtras, Fields{
+			"Status": Equal(notify.Firing), "Namespace": Equal(ns), "Rule": Equal("hot"),
+			"Count": BeEquivalentTo(20), "Sample": Equal("second"),
+		}))
 
 		// Still firing: no second Event.
 		_, c, _ = reconcileFiring()
 		Expect(c.Status).To(Equal(metav1.ConditionTrue))
 		Expect(rec.Events).NotTo(Receive())
+		Expect(sent).To(HaveLen(1))
 
 		now = now.Add(6 * time.Minute)
 		_, c, res = reconcileFiring()
 		Expect(c.Status).To(Equal(metav1.ConditionFalse))
+		Expect(rec.Events).To(Receive(HavePrefix("Normal Resolved")))
+		Expect(sent).To(HaveLen(2))
+		Expect(sent[1].Status).To(Equal(notify.Resolved))
 		Expect(res.RequeueAfter).To(Equal(aggregator.BucketSize)) // buckets kept for MaxWindow
 
 		now = now.Add(time.Hour)

@@ -31,6 +31,7 @@ import (
 
 	authnv1 "k8s.io/api/authentication/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -45,6 +46,7 @@ import (
 	rifflev1alpha1 "github.com/joshchen-dev/riffle/api/v1alpha1"
 	"github.com/joshchen-dev/riffle/internal/aggregator"
 	"github.com/joshchen-dev/riffle/internal/controller"
+	"github.com/joshchen-dev/riffle/internal/notify"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -71,7 +73,9 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
-	var countsAddr, agentUser string
+	var countsAddr, agentUser, webhookSecret string
+	flag.StringVar(&webhookSecret, "webhook-secret", "riffle-webhook",
+		"Secret in the operator's namespace whose url key gets firing and resolved alerts.")
 	flag.StringVar(&countsAddr, "counts-bind-address", ":8082", "The address agents push match counts to.")
 	flag.StringVar(&agentUser, "agent-user", "system:serviceaccount:riffle-agent:riffle-agent",
 		"The only user allowed to push counts.")
@@ -200,7 +204,12 @@ func main() {
 		Scheme:   mgr.GetScheme(),
 		Counts:   counts,
 		Recorder: mgr.GetEventRecorder("riffle-operator"),
-		Now:      time.Now,
+		Notify: (&notify.Webhook{
+			Reader:  mgr.GetAPIReader(),
+			Secret:  types.NamespacedName{Namespace: os.Getenv("POD_NAMESPACE"), Name: webhookSecret},
+			Backoff: time.Second,
+		}).Notify,
+		Now: time.Now,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "logalert")
 		os.Exit(1)

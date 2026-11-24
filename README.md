@@ -35,6 +35,16 @@ api-7d9f-hw6fk/api {"level":"error","latency_ms":715,"msg":"upstream timeout"}
 
 Works against any cluster; the operator is optional.
 
+## Alerts
+
+When a rule fires, Riffle sets `Firing`, records an Event and POSTs to a webhook (Slack-compatible):
+
+```sh
+kubectl -n riffle-system create secret generic riffle-webhook --from-literal=url=https://hooks.slack.com/services/...
+```
+
+Log line to webhook: **p50 0.5s** on k3d (`hack/bench-latency.sh`).
+
 ## Why not stern, k9s or Loki?
 
 - stern and k9s are good at tailing logs, but they don't keep rules.
@@ -50,6 +60,7 @@ Works against any cluster; the operator is optional.
 | M2 `riffle tail` (multi-pod, `--where`) | ✅ v0.2 |
 | M3 node agent (`/var/log/pods`), metrics | ✅ v0.5 |
 | M4 threshold aggregation, `Firing`, Events | ✅ v0.6 |
+| M4.1 webhook alerts, latency benchmark | ✅ v0.7 |
 | M5 CLI ↔ operator integration | |
 | M6 interactive TUI | |
 | M7 S3 archive (Terraform) | |

@@ -41,12 +41,19 @@ import (
 
 	rifflev1alpha1 "github.com/joshchen-dev/riffle/api/v1alpha1"
 	"github.com/joshchen-dev/riffle/internal/agent"
+	"github.com/joshchen-dev/riffle/internal/aggregator"
 )
 
 func main() {
 	logDir := flag.String("log-dir", "/var/log/pods", "pod log directory")
 	addr := flag.String("metrics-bind-address", ":8080", "metrics and healthz address")
 	resync := flag.Duration("resync", 2*time.Second, "how often to reconcile followers")
+	push := pushConfig{}
+	flag.StringVar(&push.url, "operator-url", "http://riffle-counts.riffle-system.svc:8082"+aggregator.Path,
+		"where match counts are pushed")
+	flag.StringVar(&push.tokenFile, "token-file", "/var/run/secrets/riffle/token",
+		"token with audience "+aggregator.Audience)
+	flag.DurationVar(&push.interval, "push-interval", aggregator.BucketSize, "how often to push counts")
 	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -58,13 +65,20 @@ func main() {
 		log.Error(nil, "NODE_NAME is not set")
 		os.Exit(1)
 	}
-	if err := run(*logDir, *addr, *resync, node); err != nil {
+	push.node = node
+	if err := run(*logDir, *addr, *resync, push); err != nil {
 		log.Error(err, "Agent failed")
 		os.Exit(1)
 	}
 }
 
-func run(logDir, addr string, resync time.Duration, node string) error {
+type pushConfig struct {
+	url, tokenFile, node string
+	interval             time.Duration
+}
+
+func run(logDir, addr string, resync time.Duration, push pushConfig) error {
+	node := push.node
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	log := ctrl.Log.WithName("agent")
@@ -92,6 +106,10 @@ func run(logDir, addr string, resync time.Duration, node string) error {
 		}
 	}()
 
+	if !c.WaitForCacheSync(ctx) {
+		return nil // stopped before the cache synced
+	}
+
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	a := agent.New(ctx, logDir, reg)
@@ -108,7 +126,24 @@ func run(logDir, addr string, resync time.Duration, node string) error {
 	}()
 	defer func() { _ = srv.Shutdown(context.Background()) }()
 
-	log.Info("Starting", "node", node, "logDir", logDir)
+	go func() {
+		tick := time.NewTicker(push.interval)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+			}
+			pctx, cancel := context.WithTimeout(ctx, push.interval)
+			if err := a.Push(pctx, push.url, push.tokenFile, node); err != nil {
+				log.Error(err, "Failed to push counts")
+			}
+			cancel()
+		}
+	}()
+
+	log.Info("Starting", "node", node, "logDir", logDir, "operator", push.url)
 	tick := time.NewTicker(resync)
 	defer tick.Stop()
 	for {

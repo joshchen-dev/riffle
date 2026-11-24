@@ -17,6 +17,9 @@ limitations under the License.
 package agent
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	rifflev1alpha1 "github.com/joshchen-dev/riffle/api/v1alpha1"
+	"github.com/joshchen-dev/riffle/internal/aggregator"
 )
 
 const ts = "2026-11-24T01:02:03.000000001Z"
@@ -50,6 +54,7 @@ func alert(name string, gen int64, mutate func(*rifflev1alpha1.LogAlertSpec)) ri
 			Selector:  metav1.LabelSelector{MatchLabels: map[string]string{"app": "api"}},
 			Container: "api",
 			Where:     "level=error",
+			Redact:    []string{`card=\d+`},
 		},
 	}
 	if mutate != nil {
@@ -103,8 +108,18 @@ func TestSync(t *testing.T) {
 		t.Fatalf("followers = %d, want 1 (api only, not proxy)", len(a.followers))
 	}
 	time.Sleep(20 * time.Millisecond)
-	write(t, file("0"), `{"level":"error"}`, `{"level":"info"}`, `not json`)
+	write(t, file("0"), `{"level":"error","msg":"card=1234"}`, `{"level":"info"}`, `not json`)
 	eventually(t, 1, matches("errors"))
+	a.mu.Lock()
+	if len(a.buckets) != 1 {
+		t.Errorf("buckets = %d, want 1", len(a.buckets))
+	}
+	for _, b := range a.buckets {
+		if b.Count != 1 || b.Sample != `{"level":"error","msg":"[REDACTED]"}` {
+			t.Errorf("bucket = %+v, want count 1 and a redacted sample", b)
+		}
+	}
+	a.mu.Unlock()
 	eventually(t, 3, func() float64 { return testutil.ToFloat64(a.Metrics.Lines) })
 
 	// A second rule on the same file is picked up without restarting the follower.
@@ -148,5 +163,70 @@ func TestOtherNamespaceNotSelected(t *testing.T) {
 	a.Sync([]corev1.Pod{pod("p1", 0, time.Now())}, []rifflev1alpha1.LogAlert{la})
 	if len(a.followers) != 0 {
 		t.Errorf("followers = %d, want 0", len(a.followers))
+	}
+}
+
+func TestPush(t *testing.T) {
+	var got []aggregator.Report
+	status := http.StatusNoContent
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		var rep aggregator.Report
+		if err := json.NewDecoder(r.Body).Decode(&rep); err != nil {
+			t.Error(err)
+		}
+		got = append(got, rep)
+		w.WriteHeader(status)
+	}))
+	defer srv.Close()
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte("tok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	a := New(t.Context(), t.TempDir(), prometheus.NewRegistry())
+	if err := a.Push(t.Context(), srv.URL, tokenFile, "n1"); err != nil || len(got) != 0 {
+		t.Fatalf("empty push: err %v, requests %d; want nil, 0", err, len(got))
+	}
+
+	r := compile(new(alert("errors", 1, nil)))
+	a.count(r, r.filter.Redact(`{"level":"error","card=1234"}`))
+	a.count(r, r.filter.Redact(`{"level":"error"}`))
+	old := bucketKey{"pay", "errors", time.Now().Add(-time.Minute).Truncate(aggregator.BucketSize)}
+	a.buckets[old] = &aggregator.Bucket{Namespace: "pay", Rule: "errors", Start: old.start, Count: 5}
+	stale := bucketKey{"pay", "errors", time.Now().Add(-2 * aggregator.MaxWindow)}
+	a.buckets[stale] = &aggregator.Bucket{Count: 1}
+
+	status = http.StatusForbidden
+	if err := a.Push(t.Context(), srv.URL, tokenFile, "n1"); err == nil {
+		t.Fatal("push: want error on 403")
+	}
+	if len(a.buckets) != 2 {
+		t.Fatalf("after failed push: %d buckets, want 2 (stale one dropped)", len(a.buckets))
+	}
+
+	status = http.StatusNoContent
+	if err := a.Push(t.Context(), srv.URL, tokenFile, "n1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.buckets) != 1 {
+		t.Errorf("after push: %d buckets, want 1 (current only)", len(a.buckets))
+	}
+	rep := got[len(got)-1]
+	if rep.Node != "n1" || len(rep.Buckets) != 2 {
+		t.Fatalf("report = %+v, want node n1 with 2 buckets", rep)
+	}
+	for _, b := range rep.Buckets {
+		if b.Start.Equal(old.start) {
+			continue
+		}
+		if b.Count != 2 || b.Sample != `{"level":"error"}` {
+			t.Errorf("current bucket = %+v, want count 2 and the last sample", b)
+		}
+	}
+	if err := a.Push(t.Context(), srv.URL, filepath.Join(t.TempDir(), "missing"), "n1"); err == nil {
+		t.Error("push with missing token file: want error")
 	}
 }

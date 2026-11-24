@@ -79,6 +79,10 @@ const (
 	ReasonValid       = "Valid"
 	ReasonInvalidSpec = "InvalidSpec"
 	ReasonSuspended   = "Suspended"
+
+	ReasonThresholdExceeded = "ThresholdExceeded"
+	ReasonBelowThreshold    = "BelowThreshold"
+	ReasonNotEvaluated      = "NotEvaluated"
 )
 
 // LogAlertStatus is the observed state of a LogAlert.

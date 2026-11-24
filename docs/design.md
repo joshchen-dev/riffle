@@ -95,13 +95,14 @@ Aggregator (runs in the operator):
 Standalone, it uses kubeconfig and the `pods/log` API. If it finds the `riffle.jhchen.dev` CRD, it enables the operator-backed features.
 
     riffle tail [-n ns] [-l sel] [-c container] [--match re] [--where expr]
-                [--since 10m] [--json] [-i]
+                [--since 1m] [-i]
     riffle tail --rule <name>          # selector/match/where/redact from a LogAlert
     riffle alert new <name> --match .. --where .. --count 20 --window 5m [--apply]
     riffle alerts                      # list LogAlerts + Ready/Firing
     riffle version
 
 - Timeline: streams use `timestamps=true` and go through a 250ms reorder buffer, then the CLI prints one merged, ordered output with a pod/container prefix.
+- Pods are watched, so pods created after the start (rollouts, restarts) are picked up.
 - Redaction: when the operator is installed, the CLI applies the `redact` patterns of every LogAlert that selects the pod.
 - `-i`: a TUI (bubbletea) with an editable filter line. The `a` key exports the current filter as LogAlert YAML.
 

@@ -25,6 +25,16 @@ api-timeouts   True             3      12s
 broken         False                   4s
 ```
 
+## CLI
+
+```console
+$ riffle tail -n payments -l app=api --where 'level=error AND latency_ms>500'
+api-7d9f-x2k4p/api {"level":"error","latency_ms":604,"msg":"upstream timeout"}
+api-7d9f-hw6fk/api {"level":"error","latency_ms":715,"msg":"upstream timeout"}
+```
+
+Works against any cluster; the operator is optional.
+
 ## Why not stern, k9s or Loki?
 
 - stern and k9s are good at tailing logs, but they don't keep rules.
@@ -37,7 +47,7 @@ broken         False                   4s
 |---|---|
 | M0 scaffold, CI | ✅ v0.1 |
 | M1 CRD, validation, status | ✅ v0.1 |
-| M2 `riffle tail` (multi-pod, `--where`) | |
+| M2 `riffle tail` (multi-pod, `--where`) | ✅ v0.2 |
 | M3 node agent (`/var/log/pods`), metrics | |
 | M4 threshold aggregation, `Firing`, Events | |
 | M5 CLI ↔ operator integration | |

@@ -42,6 +42,17 @@ api-7d9f-x2k4p/api {"level":"error","latency_ms":604,"msg":"upstream timeout",[R
 
 Works against any cluster; the operator is optional.
 
+Turn a filter into a rule, and check on rules:
+
+```console
+$ riffle alert new api-timeouts -n payments -l app=api --where 'level=error AND latency_ms>500' --count 20 > api-timeouts.yaml
+$ riffle alerts -A
+NAMESPACE   NAME           READY   FIRING   PODS   THRESHOLD   LAST MATCH
+payments    api-timeouts   True    True     3      20/5m0s     4s ago
+```
+
+`alert new` prints YAML for Git; `--create` creates it directly.
+
 ## Alerts
 
 When a rule fires, Riffle sets `Firing`, records an Event and POSTs to a webhook (Slack-compatible):
@@ -72,7 +83,7 @@ Log line to webhook: **p50 0.5s** on k3d (`hack/bench-latency.sh`).
 | M3 node agent (`/var/log/pods`), metrics | ✅ v0.5 |
 | M4 threshold aggregation, `Firing`, Events | ✅ v0.6 |
 | M4.1 webhook alerts, latency benchmark | ✅ v0.7 |
-| M5 CLI ↔ operator integration | |
+| M5 CLI ↔ operator integration | ✅ v0.9 |
 | M6 interactive TUI | |
 | M7 S3 archive (Terraform) | |
 | M8 homelab: RHEL/k3s + Argo CD | |

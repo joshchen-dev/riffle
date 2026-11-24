@@ -45,8 +45,10 @@ var version = "dev"
 const usage = `usage: riffle <command>
 
 commands:
-  tail      follow logs of selected pods
-  version   print version
+  tail        follow logs of selected pods
+  alerts      list LogAlerts with Ready and Firing
+  alert new   print or create a LogAlert
+  version     print version
 `
 
 func main() {
@@ -61,6 +63,14 @@ func run(args []string) int {
 	switch args[0] {
 	case "tail":
 		return runTail(args[1:], os.Stdout, os.Stderr)
+	case "alerts":
+		return runAlerts(args[1:], os.Stdout, os.Stderr)
+	case "alert":
+		if len(args) > 1 && args[1] == "new" {
+			return runAlertNew(args[2:], os.Stdout, os.Stderr)
+		}
+		fmt.Fprint(os.Stderr, "usage: riffle alert new <name> ...\n")
+		return 2
 	case "version":
 		fmt.Println(version)
 		return 0
@@ -82,15 +92,14 @@ func runTail(args []string, out, errOut io.Writer) int {
 		fs.PrintDefaults()
 	}
 	var (
-		kubeconfig = fs.String("kubeconfig", "", "kubeconfig path")
-		kubectx    = fs.String("context", "", "kubeconfig context")
-		ns         = fs.String("n", "", "namespace (default: from kubeconfig)")
-		selector   = fs.String("l", "", "label selector")
-		container  = fs.String("c", "", "container (default: all)")
-		match      = fs.String("match", "", "RE2 regex on the raw line")
-		where      = fs.String("where", "", "JSON field filter, e.g. 'level=error AND latency_ms>500'")
-		since      = fs.Duration("since", time.Minute, "start this far back")
-		rule       = fs.String("rule", "", "use the selector, container, match, where and redact of this LogAlert")
+		k         = addKubeFlags(fs)
+		ns        = fs.String("n", "", "namespace (default: from kubeconfig)")
+		selector  = fs.String("l", "", "label selector")
+		container = fs.String("c", "", "container (default: all)")
+		match     = fs.String("match", "", "RE2 regex on the raw line")
+		where     = fs.String("where", "", "JSON field filter, e.g. 'level=error AND latency_ms>500'")
+		since     = fs.Duration("since", time.Minute, "start this far back")
+		rule      = fs.String("rule", "", "use the selector, container, match, where and redact of this LogAlert")
 	)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -112,17 +121,7 @@ func runTail(args []string, out, errOut io.Writer) int {
 		return 2
 	}
 
-	rules := clientcmd.NewDefaultClientConfigLoadingRules()
-	rules.ExplicitPath = *kubeconfig
-	overrides := &clientcmd.ConfigOverrides{CurrentContext: *kubectx}
-	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, overrides)
-	if *ns == "" {
-		if *ns, _, err = cc.Namespace(); err != nil {
-			fmt.Fprintf(errOut, "riffle tail: %v\n", err)
-			return 1
-		}
-	}
-	cfg, err := cc.ClientConfig()
+	cfg, err := k.load(ns)
 	if err != nil {
 		fmt.Fprintf(errOut, "riffle tail: %v\n", err)
 		return 1
@@ -165,13 +164,42 @@ func runTail(args []string, out, errOut io.Writer) int {
 	return 0
 }
 
-// loadAlerts lists LogAlerts in ns, or nil if Riffle isn't installed.
-func loadAlerts(ctx context.Context, cfg *rest.Config, ns string) ([]rifflev1alpha1.LogAlert, error) {
+type kubeFlags struct{ kubeconfig, context *string }
+
+func addKubeFlags(fs *flag.FlagSet) kubeFlags {
+	return kubeFlags{
+		kubeconfig: fs.String("kubeconfig", "", "kubeconfig path"),
+		context:    fs.String("context", "", "kubeconfig context"),
+	}
+}
+
+// load returns the REST config and fills an empty *ns from kubeconfig.
+func (k kubeFlags) load(ns *string) (*rest.Config, error) {
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	rules.ExplicitPath = *k.kubeconfig
+	overrides := &clientcmd.ConfigOverrides{CurrentContext: *k.context}
+	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, overrides)
+	if *ns == "" {
+		var err error
+		if *ns, _, err = cc.Namespace(); err != nil {
+			return nil, err
+		}
+	}
+	return cc.ClientConfig()
+}
+
+// riffleClient is a client that knows the LogAlert types.
+func riffleClient(cfg *rest.Config) (client.Client, error) {
 	scheme := runtime.NewScheme()
 	if err := rifflev1alpha1.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
-	c, err := client.New(cfg, client.Options{Scheme: scheme})
+	return client.New(cfg, client.Options{Scheme: scheme})
+}
+
+// loadAlerts lists LogAlerts in ns, or nil if Riffle isn't installed.
+func loadAlerts(ctx context.Context, cfg *rest.Config, ns string) ([]rifflev1alpha1.LogAlert, error) {
+	c, err := riffleClient(cfg)
 	if err != nil {
 		return nil, err
 	}

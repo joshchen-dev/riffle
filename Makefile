@@ -67,7 +67,8 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test ./... -coverprofile cover.out
 
 .PHONY: lint
-lint: golangci-lint ## Run golangci-lint linter
+lint: golangci-lint ## Check go.mod is tidy and run golangci-lint
+	go mod tidy -diff
 	"$(GOLANGCI_LINT)" run
 
 .PHONY: lint-fix

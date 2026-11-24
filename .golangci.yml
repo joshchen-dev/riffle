@@ -29,6 +29,11 @@ linters:
       logcheck:
         type: "module"
         description: Checks Go logging calls for Kubernetes logging conventions.
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
     depguard:
       rules:
         forbid-sort-pkg:

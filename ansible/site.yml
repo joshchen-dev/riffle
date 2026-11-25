@@ -1,0 +1,87 @@
+# RHEL 9 (or Alma/Rocky 9) → single-node k3s → Argo CD → Riffle.
+# Usage: ansible-playbook -i inventory.yml site.yml
+- name: k3s with Argo CD and Riffle
+  hosts: k3s
+  become: true
+  vars:
+    k3s_version: v1.37.2+k3s1
+    k3s_manifests: /var/lib/rancher/k3s/server/manifests
+  tasks:
+    - name: Packages
+      ansible.builtin.dnf:
+        name: [firewalld, container-selinux, tar]
+        state: present
+
+    - name: SELinux stays enforcing
+      ansible.builtin.command: getenforce
+      register: selinux
+      changed_when: false
+      failed_when: selinux.stdout != "Enforcing"
+
+    - name: firewalld running
+      ansible.builtin.systemd_service:
+        name: firewalld
+        state: started
+        enabled: true
+
+    - name: Open the API server and kubelet ports
+      ansible.posix.firewalld:
+        port: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop: [6443/tcp, 10250/tcp, 80/tcp, 443/tcp]
+
+    - name: Trust pod and service networks (k3s defaults)
+      ansible.posix.firewalld:
+        zone: trusted
+        source: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop: [10.42.0.0/16, 10.43.0.0/16]
+
+    - name: k3s config directory
+      ansible.builtin.file:
+        path: /etc/rancher/k3s
+        state: directory
+        mode: "0755"
+
+    - name: k3s config
+      ansible.builtin.copy:
+        dest: /etc/rancher/k3s/config.yaml
+        mode: "0600"
+        content: |
+          write-kubeconfig-mode: "0600"
+          secrets-encryption: true
+          selinux: true
+      notify: Restart k3s
+
+    - name: Download the k3s installer for this version
+      ansible.builtin.get_url:
+        url: "https://raw.githubusercontent.com/k3s-io/k3s/{{ k3s_version }}/install.sh"
+        dest: /usr/local/bin/k3s-install.sh
+        mode: "0755"
+
+    - name: Install k3s (the installer verifies the binary's checksum and adds k3s-selinux)
+      ansible.builtin.command: /usr/local/bin/k3s-install.sh
+      environment:
+        INSTALL_K3S_VERSION: "{{ k3s_version }}"
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Node is Ready
+      ansible.builtin.command: /usr/local/bin/k3s kubectl wait node --all --for=condition=Ready --timeout=300s
+      changed_when: false
+
+    - name: Bootstrap Argo CD; k3s applies everything in its manifests directory
+      ansible.builtin.copy:
+        src: ../deploy/bootstrap/argocd.yaml
+        dest: "{{ k3s_manifests }}/riffle-argocd.yaml"
+        mode: "0600"
+
+  handlers:
+    - name: Restart k3s
+      ansible.builtin.systemd_service:
+        name: k3s
+        state: restarted

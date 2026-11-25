@@ -140,6 +140,10 @@ Standalone, it uses kubeconfig and the `pods/log` API. If it finds the `riffle.j
 7. **M6** `tail -i` TUI.
 8. **M7** S3 archive of redacted matches. Bucket, IAM and lifecycle in Terraform. (`terraform/archive`; CI runs `fmt` and `validate`.)
 9. **M8** homelab: RHEL/k3s, Argo CD app-of-apps, Riffle watching k3s/Argo CD/Traefik pods.
+   - `deploy/bootstrap/argocd.yaml`: two k3s `HelmChart`s, Argo CD and the root Application. Dropped into k3s's manifests directory, they need no helm or kubectl on the host.
+   - Root app → `deploy/apps` → `riffle` (operator + agent from the GHCR image, server-side apply for the CRD) and `riffle-rules` (LogAlerts for Traefik, CoreDNS and Argo CD; retries until the CRD exists).
+   - k3s itself runs under systemd, not in a pod, so its logs are out of Riffle's reach.
+   - Releasing a new image means bumping `newTag` in `deploy/riffle`. Upgrade path: Renovate or Argo CD Image Updater.
 
 ## Risks
 

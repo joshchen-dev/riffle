@@ -34,7 +34,7 @@ jobs:
       - name: generated files up to date
         run: git diff --exit-code
       - name: manifests render
-        run: make kustomize && bin/kustomize build config/default >/dev/null && bin/kustomize build config/agent >/dev/null
+        run: make kustomize && bin/kustomize build config/default >/dev/null && bin/kustomize build config/agent >/dev/null && bin/kustomize build deploy/riffle >/dev/null && bin/kustomize build deploy/rules >/dev/null
 
   image:
     runs-on: ubuntu-latest

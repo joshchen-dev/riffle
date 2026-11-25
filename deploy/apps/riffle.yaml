@@ -7,7 +7,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/joshchen-dev/riffle.git
-    targetRevision: feat/gitops
+    targetRevision: main
     path: deploy/riffle
   destination:
     server: https://kubernetes.default.svc

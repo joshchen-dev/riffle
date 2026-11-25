@@ -67,6 +67,13 @@ Aggregator (runs in the operator):
 - Latency, log line to webhook (`hack/bench-latency.sh`, k3d, 20 trials): p50 502 ms, max 524 ms. Most of it is the agent's 250ms file poll plus the 1s push tick.
 - Ceiling: the window lives in memory, so an operator restart resets it. That's acceptable for windows of 1h or less.
 
+Archive (M7, runs in the operator):
+- Agents add the first 100 redacted matched lines per rule and bucket to each push. A resent bucket only adds lines the operator hasn't seen.
+- The operator buffers them and uploads once a minute to `s3://<bucket>/riffle/<ns>/<rule>/dt=<day>/hour=<hh>/<time>.jsonl.gz`: gzipped JSON Lines, partitioned for Athena.
+- Off unless Secret `riffle-archive` sets `RIFFLE_ARCHIVE_BUCKET`. Credentials come from the AWS default chain: keys in that Secret on k3s, IRSA or Pod Identity on EKS.
+- Failed uploads go back to the buffer, capped at 100k lines (oldest dropped, counted in `riffle_archive_dropped_total`).
+- Ceiling: an operator restart can archive the current bucket's lines twice, and loses whatever was buffered.
+
 ## Reading logs: `/var/log/pods` vs kubelet API
 
 **Recommendation: `/var/log/pods` via read-only hostPath.**
@@ -142,4 +149,4 @@ Standalone, it uses kubeconfig and the `pods/log` API. If it finds the `riffle.j
 - **Plain HTTP counts endpoint.** A sniffed token lets someone push fake counts until it expires (10 min). Upgrade path: TLS on the endpoint.
 - **hostPath + privileged PSA** on the agent namespace. Mitigations: mount read-only, read-only root filesystem, drop all capabilities.
 - **Cardinality.** User-controlled rule names in labels, bounded by the number of LogAlerts.
-- **S3 creds on k3s.** No IRSA there. Use IAM Roles Anywhere or a scoped IAM user. Decide at M7.
+- **S3 creds on k3s.** No IRSA there, so a scoped IAM user key (PutObject under the prefix only) in a Secret. Upgrade path: IAM Roles Anywhere.

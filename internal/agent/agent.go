@@ -184,6 +184,9 @@ func (a *Agent) count(r *rule, sample string) {
 	b.Count++
 	b.Last = now
 	b.Sample = sample
+	if len(b.Lines) < aggregator.MaxLines {
+		b.Lines = append(b.Lines, aggregator.Line{Time: now, Text: sample})
+	}
 	a.changes++
 }
 

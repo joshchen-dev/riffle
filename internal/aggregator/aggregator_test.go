@@ -117,3 +117,40 @@ func TestHandler(t *testing.T) {
 		t.Errorf("Updated = %v, want %v", got, key)
 	}
 }
+
+func TestAddArchivesEachLineOnce(t *testing.T) {
+	start := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	lines := func(n int) []Line {
+		ls := make([]Line, 0, n)
+		for i := range n {
+			ls = append(ls, Line{Time: start.Add(time.Duration(i)), Text: strings.Repeat("x", i+1)})
+		}
+		return ls
+	}
+	s := NewStore()
+	report := func(node string, n int) []Record {
+		_, fresh := s.Add(Report{Node: node, Buckets: []Bucket{
+			{Namespace: "pay", Rule: "errors", Start: start, Count: int64(n), Lines: lines(n)},
+		}})
+		return fresh
+	}
+
+	if got := report("n1", 2); len(got) != 2 || got[0].Line != "x" || got[1].Node != "n1" || got[1].Rule != "errors" {
+		t.Errorf("first report: %+v", got)
+	}
+	// Resent with one more line: only the new one.
+	if got := report("n1", 3); len(got) != 1 || got[0].Line != "xxx" {
+		t.Errorf("resend: %+v", got)
+	}
+	if got := report("n1", 3); len(got) != 0 {
+		t.Errorf("same again: %+v, want none", got)
+	}
+	// Another node's bucket is separate.
+	if got := report("n2", 1); len(got) != 1 {
+		t.Errorf("n2: %+v", got)
+	}
+	// Capped at MaxLines.
+	if got := report("n3", MaxLines+10); len(got) != MaxLines {
+		t.Errorf("cap: %d lines, want %d", len(got), MaxLines)
+	}
+}

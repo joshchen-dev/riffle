@@ -29,6 +29,9 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	authnv1 "k8s.io/api/authentication/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -39,12 +42,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	rifflev1alpha1 "github.com/joshchen-dev/riffle/api/v1alpha1"
 	"github.com/joshchen-dev/riffle/internal/aggregator"
+	"github.com/joshchen-dev/riffle/internal/archive"
 	"github.com/joshchen-dev/riffle/internal/controller"
 	"github.com/joshchen-dev/riffle/internal/notify"
 	// +kubebuilder:scaffold:imports
@@ -74,6 +79,14 @@ func main() {
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
 	var countsAddr, agentUser, webhookSecret string
+	var archiveBucket, archivePrefix, archiveEndpoint string
+	var archiveInterval time.Duration
+	flag.StringVar(&archiveBucket, "archive-bucket", os.Getenv("RIFFLE_ARCHIVE_BUCKET"),
+		"S3 bucket for matched lines. Empty disables the archive. Credentials come from the AWS default chain.")
+	flag.StringVar(&archivePrefix, "archive-prefix", "riffle", "S3 key prefix.")
+	flag.StringVar(&archiveEndpoint, "archive-endpoint", os.Getenv("RIFFLE_ARCHIVE_ENDPOINT"),
+		"S3-compatible endpoint, e.g. MinIO. Empty means AWS.")
+	flag.DurationVar(&archiveInterval, "archive-interval", time.Minute, "How often to upload.")
 	flag.StringVar(&webhookSecret, "webhook-secret", "riffle-webhook",
 		"Secret in the operator's namespace whose url key gets firing and resolved alerts.")
 	flag.StringVar(&countsAddr, "counts-bind-address", ":8082", "The address agents push match counts to.")
@@ -214,6 +227,20 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "logalert")
 		os.Exit(1)
 	}
+	if archiveBucket != "" {
+		a, err := newArchiver(archiveBucket, archivePrefix, archiveEndpoint)
+		if err != nil {
+			setupLog.Error(err, "Failed to set up archive")
+			os.Exit(1)
+		}
+		a.Interval = archiveInterval
+		counts.Archive = a.Add
+		if err := mgr.Add(manager.RunnableFunc(a.Start)); err != nil {
+			setupLog.Error(err, "Failed to add archive")
+			os.Exit(1)
+		}
+		setupLog.Info("Archiving matched lines", "bucket", archiveBucket, "prefix", archivePrefix)
+	}
 	if err := mgr.Add(countsServer(countsAddr, counts, mgr.GetClient(), agentUser)); err != nil {
 		setupLog.Error(err, "Failed to add counts server")
 		os.Exit(1)
@@ -264,4 +291,19 @@ func countsServer(addr string, s *aggregator.Store, c client.Client, user string
 		}
 		return nil
 	}
+}
+
+// newArchiver uses the AWS default credential chain: env (a Secret), IRSA or Pod Identity on EKS.
+func newArchiver(bucket, prefix, endpoint string) (*archive.Archiver, error) {
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	s3c := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		if endpoint != "" {
+			o.BaseEndpoint = aws.String(endpoint)
+			o.UsePathStyle = true
+		}
+	})
+	return archive.New(s3c, bucket, prefix, ctrlmetrics.Registry), nil
 }

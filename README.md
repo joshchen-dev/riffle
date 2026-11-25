@@ -129,6 +129,7 @@ make build               # bin/manager, bin/riffle
 | `cmd/main.go` | operator |
 | `cmd/riffle` | CLI |
 | `config/` | kustomize manifests |
+| `terraform/archive` | S3 bucket and write-only IAM for the archive |
 
 ## Stack
 

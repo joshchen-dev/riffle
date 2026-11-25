@@ -44,6 +44,23 @@ jobs:
           persist-credentials: false
       - run: make docker-build
 
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.13.10
+          tofu_wrapper: false
+      - name: fmt, validate
+        working-directory: terraform/archive
+        run: |
+          tofu fmt -check -recursive
+          tofu init -backend=false -input=false
+          tofu validate
+
   version:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

@@ -131,7 +131,7 @@ Standalone, it uses kubeconfig and the `pods/log` API. If it finds the `riffle.j
 5. **M4** aggregation: Firing condition, Events.
 6. **M5** CLI ↔ operator: `--rule`, redaction, `alert new`, `alerts`.
 7. **M6** `tail -i` TUI.
-8. **M7** S3 archive of redacted matches. Bucket, IAM and lifecycle in Terraform.
+8. **M7** S3 archive of redacted matches. Bucket, IAM and lifecycle in Terraform. (`terraform/archive`; CI runs `fmt` and `validate`.)
 9. **M8** homelab: RHEL/k3s, Argo CD app-of-apps, Riffle watching k3s/Argo CD/Traefik pods.
 
 ## Risks

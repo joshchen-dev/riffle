@@ -28,3 +28,11 @@ go.work
 
 # Kubeconfig might contain secrets
 *.kubeconfig
+
+# Terraform/OpenTofu
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+# tofu and terraform write different lock files; the provider is pinned in versions.tf
+.terraform.lock.hcl

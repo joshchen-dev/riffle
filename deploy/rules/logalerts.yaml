@@ -1,0 +1,30 @@
+apiVersion: riffle.jhchen.dev/v1alpha1
+kind: LogAlert
+metadata:
+  name: traefik-errors
+  namespace: kube-system
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: traefik}}
+  match: 'level=(error|fatal)'
+  threshold: {count: 5, window: 5m}
+---
+apiVersion: riffle.jhchen.dev/v1alpha1
+kind: LogAlert
+metadata:
+  name: coredns-errors
+  namespace: kube-system
+spec:
+  selector: {matchLabels: {k8s-app: kube-dns}}
+  match: '\[ERROR\]'
+  threshold: {count: 10, window: 5m}
+---
+apiVersion: riffle.jhchen.dev/v1alpha1
+kind: LogAlert
+metadata:
+  name: argocd-sync-errors
+  namespace: argocd
+spec:
+  selector: {matchLabels: {app.kubernetes.io/part-of: argocd}}
+  match: 'level=(error|fatal)'
+  threshold: {count: 5, window: 10m}
+  redact: ['(?i)(token|password|secret)=\S+']

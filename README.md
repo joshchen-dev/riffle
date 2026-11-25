@@ -98,7 +98,7 @@ kubectl -n riffle-system create secret generic riffle-archive \
 | M5 CLI ↔ operator integration | ✅ v0.9 |
 | M6 interactive TUI | ✅ v0.10 |
 | M7 S3 archive | ✅ v0.11 (Terraform next) |
-| M8 homelab: RHEL/k3s + Argo CD | |
+| M8 homelab: RHEL/k3s + Argo CD | Argo CD ✅ v0.12, Ansible next |
 
 Design: [docs/design.md](docs/design.md)
 
@@ -113,6 +113,14 @@ kubectl apply -n default -f config/samples/riffle_v1alpha1_logalert.yaml
 ```
 
 Released images: `ghcr.io/joshchen-dev/riffle:vX.Y.Z` (amd64, arm64), built when a version tag is pushed.
+
+## Run it (GitOps, any k3s)
+
+```sh
+kubectl apply -f deploy/bootstrap/argocd.yaml   # or copy it to /var/lib/rancher/k3s/server/manifests/
+```
+
+k3s installs Argo CD, which syncs Riffle and [rules for the cluster's own components](deploy/rules/logalerts.yaml) from this repo.
 
 ## Develop
 
@@ -131,6 +139,7 @@ make build               # bin/manager, bin/riffle
 | `cmd/main.go` | operator |
 | `cmd/riffle` | CLI |
 | `config/` | kustomize manifests |
+| `deploy/` | Argo CD bootstrap, app-of-apps, homelab rules |
 | `terraform/archive` | S3 bucket and write-only IAM for the archive |
 
 ## Stack

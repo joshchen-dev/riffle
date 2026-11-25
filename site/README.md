@@ -1,6 +1,8 @@
 # riffle.jhchen.dev
 
-The project website: Vite, React and Mantine. Cloudflare Pages builds it from this folder (`npm ci && npm run build`, output `dist`).
+The project website: Vite, React and Mantine, served as static assets on Cloudflare Workers (`wrangler.jsonc`).
+
+Cloudflare build settings: root directory `site`, build `npm ci && npm run build`, deploy `npx wrangler deploy`, non-production deploy `npx wrangler versions upload`.
 
 ```sh
 npm ci

@@ -1,0 +1,8 @@
+// Cloudflare Workers static assets: serves the Vite build, no Worker code.
+{
+  "name": "riffle-site",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./dist"
+  }
+}

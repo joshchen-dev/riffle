@@ -142,6 +142,7 @@ Standalone, it uses kubeconfig and the `pods/log` API. If it finds the `riffle.j
 9. **M8** homelab: RHEL/k3s, Argo CD app-of-apps, Riffle watching k3s/Argo CD/Traefik pods.
    - `deploy/bootstrap/argocd.yaml`: two k3s `HelmChart`s, Argo CD and the root Application. Dropped into k3s's manifests directory, they need no helm or kubectl on the host.
    - Root app → `deploy/apps` → `riffle` (operator + agent from the GHCR image, server-side apply for the CRD) and `riffle-rules` (LogAlerts for Traefik, CoreDNS and Argo CD; retries until the CRD exists).
+   - `ansible/site.yml`: RHEL 9 host → firewalld, SELinux enforcing, pinned k3s with secrets encryption → copies the bootstrap. Tested on AlmaLinux 9 (Lima VM).
    - k3s itself runs under systemd, not in a pod, so its logs are out of Riffle's reach.
    - Releasing a new image means bumping `newTag` in `deploy/riffle`. Upgrade path: Renovate or Argo CD Image Updater.
 

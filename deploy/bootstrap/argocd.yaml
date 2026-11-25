@@ -1,0 +1,46 @@
+# Applied by k3s from /var/lib/rancher/k3s/server/manifests (the Ansible playbook copies it there).
+# k3s's Helm controller installs Argo CD, then the root Application; no helm or kubectl needed on the host.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: argo-cd
+  namespace: kube-system
+spec:
+  repo: https://argoproj.github.io/argo-helm
+  chart: argo-cd
+  version: 10.17.1 # Argo CD v3.6.1
+  targetNamespace: argocd
+  createNamespace: true
+  valuesContent: |-
+    dex:
+      enabled: false
+    notifications:
+      enabled: false
+---
+# Retries until Argo CD's CRDs exist.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: argocd-root
+  namespace: kube-system
+spec:
+  repo: https://argoproj.github.io/argo-helm
+  chart: argocd-apps
+  version: 2.0.8
+  targetNamespace: argocd
+  valuesContent: |-
+    applications:
+      root:
+        namespace: argocd
+        project: default
+        source:
+          repoURL: https://github.com/joshchen-dev/riffle.git
+          targetRevision: feat/gitops
+          path: deploy/apps
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: argocd
+        syncPolicy:
+          automated:
+            prune: true
+            selfHeal: true

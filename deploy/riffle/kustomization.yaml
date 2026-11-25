@@ -1,0 +1,10 @@
+# Operator + node agent from the released image.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ../../config/default
+- ../../config/agent
+images:
+- name: controller
+  newName: ghcr.io/joshchen-dev/riffle
+  newTag: v0.11.0

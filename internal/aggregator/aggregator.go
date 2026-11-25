@@ -41,6 +41,8 @@ const (
 	Audience = "riffle-operator"
 	// Path is where agents POST a Report.
 	Path = "/v1/counts"
+	// MaxLines is how many matched lines an agent sends per rule and bucket, for the archive.
+	MaxLines = 100
 )
 
 // Report is what an agent POSTs.
@@ -56,8 +58,24 @@ type Bucket struct {
 	Rule      string    `json:"rule"`
 	Start     time.Time `json:"start"`
 	Count     int64     `json:"count"`
-	Last      time.Time `json:"last"`   // time of the last match
-	Sample    string    `json:"sample"` // last matched line, redacted
+	Last      time.Time `json:"last"`            // time of the last match
+	Sample    string    `json:"sample"`          // last matched line, redacted
+	Lines     []Line    `json:"lines,omitempty"` // first MaxLines matched lines, redacted; only grows
+}
+
+// Line is one matched line.
+type Line struct {
+	Time time.Time `json:"t"`
+	Text string    `json:"line"`
+}
+
+// Record is a matched line on its way to the archive.
+type Record struct {
+	Namespace string    `json:"namespace"`
+	Rule      string    `json:"rule"`
+	Node      string    `json:"node"`
+	Time      time.Time `json:"t"`
+	Line      string    `json:"line"`
 }
 
 // Store keeps buckets in memory.
@@ -67,12 +85,19 @@ type Store struct {
 	rules map[types.NamespacedName]*rule
 	// Updated receives the key of every rule a Report touched.
 	Updated chan event.TypedGenericEvent[types.NamespacedName]
+	// Archive, if set, receives lines not seen before.
+	Archive func([]Record)
 }
 
 type rule struct {
-	counts map[nodeBucket]int64
+	counts map[nodeBucket]*slot
 	last   time.Time
 	sample string
+}
+
+type slot struct {
+	count    int64
+	archived int // lines already passed to Archive; a resent bucket only adds lines after these
 }
 
 type nodeBucket struct {
@@ -85,25 +110,37 @@ func NewStore() *Store {
 	return &Store{rules: map[types.NamespacedName]*rule{}, Updated: make(chan event.TypedGenericEvent[types.NamespacedName], 1024)}
 }
 
-// Add records a report and returns the rules it touched.
-func (s *Store) Add(r Report) []types.NamespacedName {
+// Add records a report and returns the rules it touched and the lines not seen before.
+// ponytail: an operator restart forgets which lines were archived, so the current bucket's lines can repeat.
+func (s *Store) Add(r Report) ([]types.NamespacedName, []Record) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	touched := make([]types.NamespacedName, 0, len(r.Buckets))
+	var fresh []Record
 	for _, b := range r.Buckets {
 		key := types.NamespacedName{Namespace: b.Namespace, Name: b.Rule}
 		ru := s.rules[key]
 		if ru == nil {
-			ru = &rule{counts: map[nodeBucket]int64{}}
+			ru = &rule{counts: map[nodeBucket]*slot{}}
 			s.rules[key] = ru
 		}
-		ru.counts[nodeBucket{r.Node, b.Start.Truncate(BucketSize)}] = b.Count
+		nb := nodeBucket{r.Node, b.Start.Truncate(BucketSize)}
+		sl := ru.counts[nb]
+		if sl == nil {
+			sl = &slot{}
+			ru.counts[nb] = sl
+		}
+		sl.count = b.Count
+		for _, l := range b.Lines[min(sl.archived, len(b.Lines)):min(len(b.Lines), MaxLines)] {
+			fresh = append(fresh, Record{Namespace: b.Namespace, Rule: b.Rule, Node: r.Node, Time: l.Time, Line: l.Text})
+		}
+		sl.archived = max(sl.archived, min(len(b.Lines), MaxLines))
 		if b.Count > 0 && !b.Last.Before(ru.last) {
 			ru.last, ru.sample = b.Last, truncate(b.Sample, MaxSample)
 		}
 		touched = append(touched, key)
 	}
-	return touched
+	return touched, fresh
 }
 
 // Window returns the sum of buckets that start within window of now, plus the last match.
@@ -117,12 +154,12 @@ func (s *Store) Window(key types.NamespacedName, window time.Duration, now time.
 	}
 	// A bucket counts while any part of it is inside the window.
 	from := now.Add(-window - BucketSize)
-	for nb, n := range ru.counts {
+	for nb, sl := range ru.counts {
 		switch {
 		case !nb.start.After(now.Add(-MaxWindow - BucketSize)):
 			delete(ru.counts, nb)
 		case nb.start.After(from):
-			sum += n
+			sum += sl.count
 		}
 	}
 	return sum, ru.last, ru.sample, len(ru.counts) > 0
@@ -162,7 +199,11 @@ func (s *Store) Handler(review func(ctx context.Context, token string) (string, 
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		for _, key := range s.Add(r) {
+		touched, fresh := s.Add(r)
+		if s.Archive != nil && len(fresh) > 0 {
+			s.Archive(fresh)
+		}
+		for _, key := range touched {
 			select {
 			case s.Updated <- event.TypedGenericEvent[types.NamespacedName]{Object: key}:
 			case <-req.Context().Done():

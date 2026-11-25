@@ -115,7 +115,8 @@ func TestSync(t *testing.T) {
 		t.Errorf("buckets = %d, want 1", len(a.buckets))
 	}
 	for _, b := range a.buckets {
-		if b.Count != 1 || b.Sample != `{"level":"error","msg":"[REDACTED]"}` {
+		if b.Count != 1 || b.Sample != `{"level":"error","msg":"[REDACTED]"}` ||
+			len(b.Lines) != 1 || b.Lines[0].Text != b.Sample {
 			t.Errorf("bucket = %+v, want count 1 and a redacted sample", b)
 		}
 	}
@@ -233,5 +234,18 @@ func TestPush(t *testing.T) {
 	a.count(r, "")
 	if err := a.Push(t.Context(), srv.URL, filepath.Join(t.TempDir(), "missing"), "n1"); err == nil {
 		t.Error("push with missing token file: want error")
+	}
+}
+
+func TestCountCapsLines(t *testing.T) {
+	a := New(t.Context(), t.TempDir(), prometheus.NewRegistry())
+	r := compile(new(alert("errors", 1, nil)))
+	for range aggregator.MaxLines + 10 {
+		a.count(r, "x")
+	}
+	for _, b := range a.buckets {
+		if b.Count < int64(aggregator.MaxLines) || len(b.Lines) > aggregator.MaxLines {
+			t.Errorf("count %d lines %d, want all counted and at most %d lines", b.Count, len(b.Lines), aggregator.MaxLines)
+		}
 	}
 }

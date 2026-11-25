@@ -70,6 +70,12 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
+        # Optional: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, RIFFLE_ARCHIVE_BUCKET
+        # (and RIFFLE_ARCHIVE_ENDPOINT for S3-compatible stores) turn on the S3 archive.
+        envFrom:
+        - secretRef:
+            name: riffle-archive
+            optional: true
         ports:
         - containerPort: 8081
           name: health

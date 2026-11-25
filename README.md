@@ -71,6 +71,16 @@ Log line to webhook: **p50 0.5s** on k3d (`hack/bench-latency.sh`).
 - Loki stores and searches logs, which means running a log store.
 - Riffle sits between the two. Rules are namespaced CRDs, so they're reviewed in Git, scoped by RBAC and deployed with Argo CD. The CLI and the operator share one filter engine, so an ad-hoc filter turns into an alert unchanged.
 
+## Archive
+
+Redacted matched lines can go to S3 (or any S3-compatible store), as gzipped JSON Lines partitioned by namespace, rule, day and hour:
+
+```sh
+kubectl -n riffle-system create secret generic riffle-archive \
+  --from-literal=RIFFLE_ARCHIVE_BUCKET=my-bucket --from-literal=AWS_REGION=us-east-1 \
+  --from-literal=AWS_ACCESS_KEY_ID=... --from-literal=AWS_SECRET_ACCESS_KEY=...
+```
+
 ## Architecture
 
 ![Riffle architecture](docs/architecture.svg)
@@ -87,7 +97,7 @@ Log line to webhook: **p50 0.5s** on k3d (`hack/bench-latency.sh`).
 | M4.1 webhook alerts, latency benchmark | ✅ v0.7 |
 | M5 CLI ↔ operator integration | ✅ v0.9 |
 | M6 interactive TUI | ✅ v0.10 |
-| M7 S3 archive (Terraform) | |
+| M7 S3 archive | ✅ v0.11 (Terraform next) |
 | M8 homelab: RHEL/k3s + Argo CD | |
 
 Design: [docs/design.md](docs/design.md)

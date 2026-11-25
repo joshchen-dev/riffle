@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Riffle: log alerts as Kubernetes resources</title>
+    <meta name="description" content="Declare log rules as LogAlert CRDs. A node agent matches pod logs; the operator sets Firing, records Events and calls your webhook within half a second. Open source." />
+    <meta property="og:title" content="Riffle: log alerts as Kubernetes resources" />
+    <meta property="og:description" content="Log rules as CRDs, matched on every node, alerting in about half a second. Open source, Apache 2.0." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://riffle.jhchen.dev/" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <script>
+      // Set the color scheme before first paint, so dark-mode visitors don't see a flash of light.
+      try {
+        const s = localStorage.getItem('mantine-color-scheme-value') || 'auto';
+        const dark = s === 'dark' || (s === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.setAttribute('data-mantine-color-scheme', dark ? 'dark' : 'light');
+      } catch {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

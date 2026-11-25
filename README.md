@@ -112,6 +112,8 @@ make deploy IMG=riffle-operator:dev   # operator + node agent
 kubectl apply -n default -f config/samples/riffle_v1alpha1_logalert.yaml
 ```
 
+Released images: `ghcr.io/joshchen-dev/riffle:vX.Y.Z` (amd64, arm64), built when a version tag is pushed.
+
 ## Run it (GitOps, any k3s)
 
 On a fresh RHEL 9 host, [`ansible/site.yml`](ansible/README.md) installs k3s and does the step below.

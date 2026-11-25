@@ -36,3 +36,7 @@ go.work
 *.tfvars
 # tofu and terraform write different lock files; the provider is pinned in versions.tf
 .terraform.lock.hcl
+
+# Website
+site/node_modules/
+site/dist/

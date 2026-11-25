@@ -1,0 +1,60 @@
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 72px;
+}
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: blur(10px);
+  background: light-dark(rgba(255, 255, 255, 0.8), rgba(26, 27, 30, 0.8));
+  border-bottom: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+}
+
+.hero-title {
+  font-size: clamp(2.25rem, 5vw, 3.5rem);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.section-alt {
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-8));
+}
+
+/* Terminal-style code: dark in both color schemes. */
+.term {
+  background: #0d1117;
+  color: #e6edf3;
+  border: 1px solid #30363d;
+  border-radius: var(--mantine-radius-md);
+  padding: 1rem 1.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  white-space: pre-wrap; /* wrap long commands instead of widening the page */
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+
+.term .prompt {
+  color: #7ee787;
+}
+
+.term .dim {
+  color: #8b949e;
+}
+
+.diagram {
+  background: #fff;
+  border-radius: var(--mantine-radius-md);
+  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  width: 100%;
+  height: auto;
+}
+
+.stat {
+  font-size: 2.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}

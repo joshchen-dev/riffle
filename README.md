@@ -1,6 +1,6 @@
 # Riffle
 
-[![CI](https://github.com/joshchen-dev/riffle/actions/workflows/ci.yml/badge.svg)](https://github.com/joshchen-dev/riffle/actions/workflows/ci.yml)
+[![CI](https://github.com/joshchen-dev/riffle/actions/workflows/ci.yml/badge.svg)](https://github.com/joshchen-dev/riffle/actions/workflows/ci.yml) · [riffle.jhchen.dev](https://riffle.jhchen.dev)
 
 Log rules as Kubernetes resources. Teams declare a `LogAlert`; Riffle matches it against pod logs and reports matches as Prometheus metrics, Events and `.status`. The `riffle` CLI tails the same logs and reuses the same rules.
 
@@ -143,6 +143,7 @@ make build               # bin/manager, bin/riffle
 | `config/` | kustomize manifests |
 | `ansible/` | RHEL 9 → k3s → Argo CD bootstrap |
 | `deploy/` | Argo CD bootstrap, app-of-apps, homelab rules |
+| `site/` | [riffle.jhchen.dev](https://riffle.jhchen.dev) (Vite, React, Mantine) |
 | `terraform/archive` | S3 bucket and write-only IAM for the archive |
 
 ## Stack
